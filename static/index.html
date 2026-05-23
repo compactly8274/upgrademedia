@@ -14,7 +14,7 @@
   <span class="text-blue-400 font-bold text-lg tracking-tight">Media Manager</span>
   <nav class="flex gap-1">
     <template x-for="t in tabs" :key="t">
-      <button @click="activeTab=t"
+      <button @click="setTab(t)"
         :class="activeTab===t ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-750'"
         class="px-3 py-1.5 rounded text-sm font-medium capitalize"
         x-text="t"></button>
@@ -48,10 +48,8 @@
     <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
       <table class="w-full text-sm">
         <thead><tr class="border-b border-gray-700 text-gray-400 text-xs uppercase tracking-wide">
-          <th class="text-left px-4 py-2">Type</th>
-          <th class="text-left px-4 py-2">Started</th>
-          <th class="text-left px-4 py-2">Duration</th>
-          <th class="text-left px-4 py-2">Status</th>
+          <th class="text-left px-4 py-2">Type</th><th class="text-left px-4 py-2">Started</th>
+          <th class="text-left px-4 py-2">Duration</th><th class="text-left px-4 py-2">Status</th>
           <th class="text-left px-4 py-2">Summary</th>
         </tr></thead>
         <tbody>
@@ -67,6 +65,139 @@
           <tr x-show="!runs.length"><td colspan="5" class="px-4 py-8 text-center text-gray-500">No runs yet. Start with an Analyze scan.</td></tr>
         </tbody>
       </table>
+    </div>
+  </section>
+
+  <!-- LIBRARY -->
+  <section x-show="activeTab==='library'" x-cloak>
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-lg font-semibold">Media Library</h2>
+      <button @click="refreshLibrary()" :disabled="libraryLoading"
+        class="bg-gray-700 hover:bg-gray-600 disabled:opacity-40 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+        <span x-text="libraryLoading ? 'Loading…' : 'Refresh'"></span>
+      </button>
+    </div>
+
+    <!-- Sub-tabs -->
+    <div class="flex gap-1 mb-4 bg-gray-800 border border-gray-700 rounded-lg p-1 w-fit">
+      <button @click="setLibraryTab('movies')"
+        :class="libraryTab==='movies' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'"
+        class="px-4 py-1.5 rounded text-sm font-medium">
+        Movies
+        <span class="text-xs text-gray-400 ml-1" x-show="movies.length" x-text="'(' + movies.length + ')'"></span>
+      </button>
+      <button @click="setLibraryTab('series')"
+        :class="libraryTab==='series' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'"
+        class="px-4 py-1.5 rounded text-sm font-medium">
+        Series
+        <span class="text-xs text-gray-400 ml-1" x-show="series.length" x-text="'(' + series.length + ')'"></span>
+      </button>
+    </div>
+
+    <!-- Movies -->
+    <div x-show="libraryTab==='movies'">
+      <div class="flex items-center gap-3 mb-3">
+        <input type="search" x-model="movieSearch" placeholder="Search movies…"
+          class="bg-gray-700 rounded-lg px-3 py-2 text-sm border border-gray-600 focus:border-blue-500 outline-none w-72">
+        <span class="text-xs text-gray-500" x-text="filteredMovies.length + ' movies · ' + filteredMovieSizeGb + ' GB'"></span>
+      </div>
+      <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
+        <table class="w-full text-sm">
+          <thead><tr class="border-b border-gray-700 text-gray-400 text-xs uppercase tracking-wide">
+            <th class="text-left px-4 py-2 cursor-pointer hover:text-white select-none" @click="sortMovies('title')">
+              Title <span x-text="movieSort.col==='title' ? (movieSort.dir===1?'↑':'↓') : ''"></span>
+            </th>
+            <th class="text-left px-4 py-2 cursor-pointer hover:text-white select-none w-20" @click="sortMovies('year')">
+              Year <span x-text="movieSort.col==='year' ? (movieSort.dir===1?'↑':'↓') : ''"></span>
+            </th>
+            <th class="text-right px-4 py-2 cursor-pointer hover:text-white select-none w-24" @click="sortMovies('size_gb')">
+              Size <span x-text="movieSort.col==='size_gb' ? (movieSort.dir===1?'↑':'↓') : ''"></span>
+            </th>
+            <th class="text-left px-4 py-2 w-32">Quality</th>
+            <th class="px-4 py-2 w-20"></th>
+          </tr></thead>
+          <tbody>
+            <template x-for="m in filteredMovies" :key="m.id">
+              <tr class="border-b border-gray-700/50 hover:bg-gray-750">
+                <td class="px-4 py-2 font-medium" x-text="m.title"></td>
+                <td class="px-4 py-2 text-gray-400" x-text="m.year"></td>
+                <td class="px-4 py-2 text-right tabular-nums" x-text="m.size_gb + ' GB'"></td>
+                <td class="px-4 py-2 text-xs"
+                  :class="m.quality==='missing' ? 'text-red-400' : 'text-gray-400'"
+                  x-text="m.quality"></td>
+                <td class="px-4 py-2 text-right">
+                  <button @click="deleteMovie(m)"
+                    class="bg-red-800 hover:bg-red-700 px-3 py-1 rounded text-xs font-medium transition-colors">
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            </template>
+            <tr x-show="libraryLoading">
+              <td colspan="5" class="px-4 py-10 text-center text-gray-500">Loading from Radarr…</td>
+            </tr>
+            <tr x-show="!libraryLoading && !filteredMovies.length">
+              <td colspan="5" class="px-4 py-10 text-center text-gray-500">
+                <span x-show="!movies.length">No movies found. Check Radarr is configured in Settings.</span>
+                <span x-show="movies.length && !filteredMovies.length">No movies match your search.</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Series -->
+    <div x-show="libraryTab==='series'">
+      <div class="flex items-center gap-3 mb-3">
+        <input type="search" x-model="seriesSearch" placeholder="Search series…"
+          class="bg-gray-700 rounded-lg px-3 py-2 text-sm border border-gray-600 focus:border-blue-500 outline-none w-72">
+        <span class="text-xs text-gray-500" x-text="filteredSeries.length + ' series · ' + filteredSeriesSizeGb + ' GB'"></span>
+      </div>
+      <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
+        <table class="w-full text-sm">
+          <thead><tr class="border-b border-gray-700 text-gray-400 text-xs uppercase tracking-wide">
+            <th class="text-left px-4 py-2 cursor-pointer hover:text-white select-none" @click="sortSeries('title')">
+              Title <span x-text="seriesSort.col==='title' ? (seriesSort.dir===1?'↑':'↓') : ''"></span>
+            </th>
+            <th class="text-left px-4 py-2 cursor-pointer hover:text-white select-none w-20" @click="sortSeries('year')">
+              Year <span x-text="seriesSort.col==='year' ? (seriesSort.dir===1?'↑':'↓') : ''"></span>
+            </th>
+            <th class="text-right px-4 py-2 cursor-pointer hover:text-white select-none w-24" @click="sortSeries('size_gb')">
+              Size <span x-text="seriesSort.col==='size_gb' ? (seriesSort.dir===1?'↑':'↓') : ''"></span>
+            </th>
+            <th class="text-left px-4 py-2 w-28">Episodes</th>
+            <th class="text-left px-4 py-2 w-24">Status</th>
+            <th class="px-4 py-2 w-20"></th>
+          </tr></thead>
+          <tbody>
+            <template x-for="s in filteredSeries" :key="s.id">
+              <tr class="border-b border-gray-700/50 hover:bg-gray-750">
+                <td class="px-4 py-2 font-medium" x-text="s.title"></td>
+                <td class="px-4 py-2 text-gray-400" x-text="s.year"></td>
+                <td class="px-4 py-2 text-right tabular-nums" x-text="s.size_gb + ' GB'"></td>
+                <td class="px-4 py-2 text-xs text-gray-400" x-text="s.episode_count + ' / ' + s.episode_total"></td>
+                <td class="px-4 py-2 text-xs capitalize text-gray-400" x-text="s.status"></td>
+                <td class="px-4 py-2 text-right">
+                  <button @click="deleteSeries(s)"
+                    class="bg-red-800 hover:bg-red-700 px-3 py-1 rounded text-xs font-medium transition-colors">
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            </template>
+            <tr x-show="libraryLoading">
+              <td colspan="6" class="px-4 py-10 text-center text-gray-500">Loading from Sonarr…</td>
+            </tr>
+            <tr x-show="!libraryLoading && !filteredSeries.length">
+              <td colspan="6" class="px-4 py-10 text-center text-gray-500">
+                <span x-show="!series.length">No series found. Check Sonarr is configured in Settings.</span>
+                <span x-show="series.length && !filteredSeries.length">No series match your search.</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </section>
 
@@ -94,9 +225,7 @@
       <label class="flex items-center gap-2 bg-gray-800 px-3 py-1.5 rounded-lg border border-gray-700">
         <span class="text-gray-400">Type</span>
         <select x-model="af.type" class="bg-transparent outline-none">
-          <option value="">All</option>
-          <option value="movie">Movies</option>
-          <option value="show">Shows</option>
+          <option value="">All</option><option value="movie">Movies</option><option value="show">Shows</option>
         </select>
       </label>
       <span class="flex items-center text-xs text-gray-500 ml-auto" x-text="filteredCandidates.length + ' items · ' + filteredSizeGb + ' GB'"></span>
@@ -104,12 +233,9 @@
     <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
       <table class="w-full text-sm">
         <thead><tr class="border-b border-gray-700 text-gray-400 text-xs uppercase tracking-wide">
-          <th class="text-left px-4 py-2">Title</th>
-          <th class="text-left px-4 py-2">Type</th>
-          <th class="text-right px-4 py-2">Size</th>
-          <th class="text-left px-4 py-2">Last Watched</th>
-          <th class="text-right px-4 py-2">Days Stale</th>
-          <th class="text-right px-4 py-2">Score</th>
+          <th class="text-left px-4 py-2">Title</th><th class="text-left px-4 py-2">Type</th>
+          <th class="text-right px-4 py-2">Size</th><th class="text-left px-4 py-2">Last Watched</th>
+          <th class="text-right px-4 py-2">Days Stale</th><th class="text-right px-4 py-2">Score</th>
           <th class="px-4 py-2"></th>
         </tr></thead>
         <tbody>
@@ -124,10 +250,7 @@
                 x-text="c.days_stale===99999 ? 'Never' : c.days_stale"></td>
               <td class="px-4 py-2 text-right tabular-nums font-mono text-gray-300" x-text="c.score"></td>
               <td class="px-4 py-2">
-                <button @click="delCandidate(c)"
-                  class="bg-red-800 hover:bg-red-700 px-3 py-1 rounded text-xs font-medium transition-colors">
-                  Delete
-                </button>
+                <button @click="delCandidate(c)" class="bg-red-800 hover:bg-red-700 px-3 py-1 rounded text-xs font-medium transition-colors">Delete</button>
               </td>
             </tr>
           </template>
@@ -184,17 +307,14 @@
     <div class="flex items-center justify-between mb-4">
       <h2 class="text-lg font-semibold">Scheduled Jobs</h2>
       <button @click="showNewSched=!showNewSched"
-        class="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
-        + Add Schedule
-      </button>
+        class="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-sm font-medium transition-colors">+ Add Schedule</button>
     </div>
     <div x-show="showNewSched" x-cloak class="bg-gray-800 rounded-xl border border-gray-700 p-4 mb-4 max-w-lg">
       <div class="flex gap-3 mb-3">
         <div class="flex-1">
           <label class="block text-xs text-gray-400 mb-1">Job Type</label>
           <select x-model="newSched.job_type" class="bg-gray-700 rounded-lg px-3 py-2 w-full text-sm border border-gray-600 outline-none">
-            <option value="analyze">Analyze</option>
-            <option value="upgrade">Upgrade</option>
+            <option value="analyze">Analyze</option><option value="upgrade">Upgrade</option>
           </select>
         </div>
         <div class="flex-1">
@@ -212,10 +332,8 @@
     <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
       <table class="w-full text-sm">
         <thead><tr class="border-b border-gray-700 text-gray-400 text-xs uppercase tracking-wide">
-          <th class="text-left px-4 py-2">Type</th>
-          <th class="text-left px-4 py-2">Cron</th>
-          <th class="text-left px-4 py-2">Status</th>
-          <th class="px-4 py-2"></th>
+          <th class="text-left px-4 py-2">Type</th><th class="text-left px-4 py-2">Cron</th>
+          <th class="text-left px-4 py-2">Status</th><th class="px-4 py-2"></th>
         </tr></thead>
         <tbody>
           <template x-for="s in schedules" :key="s.id">
@@ -225,8 +343,7 @@
               <td class="px-4 py-2">
                 <button @click="toggleSched(s)"
                   :class="s.enabled ? 'bg-emerald-900 text-emerald-300 border-emerald-700' : 'bg-gray-700 text-gray-400 border-gray-600'"
-                  class="px-2 py-0.5 rounded-full text-xs border"
-                  x-text="s.enabled ? 'Enabled' : 'Disabled'"></button>
+                  class="px-2 py-0.5 rounded-full text-xs border" x-text="s.enabled ? 'Enabled' : 'Disabled'"></button>
               </td>
               <td class="px-4 py-2 text-right">
                 <button @click="delSched(s.id)" class="text-red-400 hover:text-red-300 text-xs">Remove</button>
@@ -245,17 +362,13 @@
     <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
       <table class="w-full text-sm">
         <thead><tr class="border-b border-gray-700 text-gray-400 text-xs uppercase tracking-wide">
-          <th class="text-left px-4 py-2">ID</th>
-          <th class="text-left px-4 py2">Type</th>
-          <th class="text-left px-4 py-2">Started</th>
-          <th class="text-left px-4 py-2">Duration</th>
-          <th class="text-left px-4 py-2">Status</th>
-          <th class="text-left px-4 py-2">Summary</th>
+          <th class="text-left px-4 py-2">ID</th><th class="text-left px-4 py-2">Type</th>
+          <th class="text-left px-4 py-2">Started</th><th class="text-left px-4 py-2">Duration</th>
+          <th class="text-left px-4 py-2">Status</th><th class="text-left px-4 py-2">Summary</th>
         </tr></thead>
         <tbody>
           <template x-for="r in runs" :key="r.id">
-            <tr class="border-b border-gray-700/50 hover:bg-gray-750 cursor-pointer"
-              @click="selRun = selRun?.id===r.id ? null : r">
+            <tr class="border-b border-gray-700/50 hover:bg-gray-750 cursor-pointer" @click="selRun=selRun?.id===r.id?null:r">
               <td class="px-4 py-2 text-gray-500" x-text="r.id"></td>
               <td class="px-4 py-2 capitalize font-medium" x-text="r.type"></td>
               <td class="px-4 py-2 text-gray-400" x-text="fmt(r.started_at)"></td>
@@ -286,10 +399,7 @@
             class="bg-gray-700 rounded-lg px-3 py-2 w-full text-sm font-mono border border-gray-600 focus:border-blue-500 outline-none">
         </div>
       </template>
-      <button type="submit"
-        class="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg text-sm font-medium transition-colors">
-        Save Settings
-      </button>
+      <button type="submit" class="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-lg text-sm font-medium transition-colors">Save Settings</button>
     </form>
   </section>
 
@@ -298,7 +408,7 @@
 <script>
 function app() {
   return {
-    tabs: ['dashboard','analyze','upgrade','schedules','history','settings'],
+    tabs: ['dashboard','library','analyze','upgrade','schedules','history','settings'],
     activeTab: 'dashboard',
     banner: '', bannerErr: false,
     runs: [], candidates: [], schedules: [], config: {},
@@ -309,36 +419,96 @@ function app() {
     newSched: { job_type: 'analyze', cron: '0 3 * * *' },
     selRun: null,
     af: { gb: 0, days: 0, type: '' },
+    // Library
+    libraryTab: 'movies',
+    movies: [], series: [],
+    movieSearch: '', seriesSearch: '',
+    movieSort: { col: 'title', dir: 1 },
+    seriesSort: { col: 'title', dir: 1 },
+    libraryLoading: false,
 
     configFields: [
-      {key:'radarr_url',        label:'Radarr URL',                   type:'text'},
-      {key:'radarr_api_key',    label:'Radarr API Key',               type:'password'},
-      {key:'sonarr_url',        label:'Sonarr URL',                   type:'text'},
-      {key:'sonarr_api_key',    label:'Sonarr API Key',               type:'password'},
-      {key:'plex_url',          label:'Plex URL',                     type:'text'},
-      {key:'plex_token',        label:'Plex Token',                   type:'password'},
-      {key:'quality_threshold', label:'Quality Score Threshold',      type:'number'},
-      {key:'min_size_gb',       label:'Min Size GB (analyze)',         type:'number'},
-      {key:'min_days_stale',    label:'Min Days Stale (analyze)',      type:'number'},
+      {key:'radarr_url',        label:'Radarr URL',                type:'text'},
+      {key:'radarr_api_key',    label:'Radarr API Key',            type:'password'},
+      {key:'sonarr_url',        label:'Sonarr URL',                type:'text'},
+      {key:'sonarr_api_key',    label:'Sonarr API Key',            type:'password'},
+      {key:'plex_url',          label:'Plex URL',                  type:'text'},
+      {key:'plex_token',        label:'Plex Token',                type:'password'},
+      {key:'quality_threshold', label:'Quality Score Threshold',   type:'number'},
+      {key:'min_size_gb',       label:'Min Size GB (analyze)',      type:'number'},
+      {key:'min_days_stale',    label:'Min Days Stale (analyze)',   type:'number'},
     ],
 
-    get totalSizeGb() {
-      return this.candidates.reduce((s,c) => s+(c.size_gb||0), 0).toFixed(1);
-    },
+    get totalSizeGb()  { return this.candidates.reduce((s,c)=>s+(c.size_gb||0),0).toFixed(1); },
     get filteredCandidates() {
       return this.candidates.filter(c =>
-        c.size_gb >= (parseFloat(this.af.gb)||0) &&
-        c.days_stale >= (parseInt(this.af.days)||0) &&
-        (!this.af.type || c.media_type === this.af.type)
-      );
+        c.size_gb>=(parseFloat(this.af.gb)||0) &&
+        c.days_stale>=(parseInt(this.af.days)||0) &&
+        (!this.af.type||c.media_type===this.af.type));
     },
-    get filteredSizeGb() {
-      return this.filteredCandidates.reduce((s,c) => s+(c.size_gb||0), 0).toFixed(1);
+    get filteredSizeGb() { return this.filteredCandidates.reduce((s,c)=>s+(c.size_gb||0),0).toFixed(1); },
+    get filteredMovies() {
+      const q = this.movieSearch.toLowerCase();
+      const list = this.movies.filter(m => !q || m.title.toLowerCase().includes(q));
+      const {col,dir} = this.movieSort;
+      return list.sort((a,b) => ((a[col]??'') < (b[col]??'') ? -dir : (a[col]??'') > (b[col]??'') ? dir : 0));
     },
+    get filteredMovieSizeGb() { return this.filteredMovies.reduce((s,m)=>s+(m.size_gb||0),0).toFixed(1); },
+    get filteredSeries() {
+      const q = this.seriesSearch.toLowerCase();
+      const list = this.series.filter(s => !q || s.title.toLowerCase().includes(q));
+      const {col,dir} = this.seriesSort;
+      return list.sort((a,b) => ((a[col]??'') < (b[col]??'') ? -dir : (a[col]??'') > (b[col]??'') ? dir : 0));
+    },
+    get filteredSeriesSizeGb() { return this.filteredSeries.reduce((s,x)=>s+(x.size_gb||0),0).toFixed(1); },
 
     async init() {
       await Promise.all([this.loadRuns(), this.loadCandidates(), this.loadSchedules(), this.loadConfig()]);
       setInterval(() => this.loadRuns(), 15000);
+    },
+
+    setTab(t) {
+      this.activeTab = t;
+      if (t === 'library' && !this.movies.length && !this.series.length) this.loadLibrary();
+    },
+    setLibraryTab(t) {
+      this.libraryTab = t;
+    },
+    async loadLibrary() {
+      this.libraryLoading = true;
+      await Promise.all([this.loadMovies(), this.loadSeriesList()]);
+      this.libraryLoading = false;
+    },
+    async loadMovies() {
+      try { this.movies = await this.req('GET', '/api/library/movies'); }
+      catch(e) { this.flash('Radarr: ' + e.message, true); }
+    },
+    async loadSeriesList() {
+      try { this.series = await this.req('GET', '/api/library/series'); }
+      catch(e) { this.flash('Sonarr: ' + e.message, true); }
+    },
+    refreshLibrary() { this.movies=[]; this.series=[]; this.loadLibrary(); },
+    sortMovies(col) {
+      this.movieSort = this.movieSort.col===col ? {col, dir:this.movieSort.dir*-1} : {col, dir:1};
+    },
+    sortSeries(col) {
+      this.seriesSort = this.seriesSort.col===col ? {col, dir:this.seriesSort.dir*-1} : {col, dir:1};
+    },
+    async deleteMovie(m) {
+      if (!confirm(`Delete "${m.title}" and remove its files from disk?\n\nThis cannot be undone.`)) return;
+      try {
+        await this.req('DELETE', `/api/library/movies/${m.id}`);
+        this.movies = this.movies.filter(x => x.id!==m.id);
+        this.flash(`Deleted: ${m.title}`);
+      } catch(e) { this.flash('Delete failed: '+e.message, true); }
+    },
+    async deleteSeries(s) {
+      if (!confirm(`Delete "${s.title}" and ALL its episode files from disk?\n\nThis cannot be undone.`)) return;
+      try {
+        await this.req('DELETE', `/api/library/series/${s.id}`);
+        this.series = this.series.filter(x => x.id!==s.id);
+        this.flash(`Deleted: ${s.title}`);
+      } catch(e) { this.flash('Delete failed: '+e.message, true); }
     },
 
     async req(method, path, body=null, isForm=false) {
@@ -349,12 +519,7 @@ function app() {
       if (!r.ok) throw new Error(await r.text());
       return r.json();
     },
-
-    flash(msg, err=false) {
-      this.banner=msg; this.bannerErr=err;
-      setTimeout(()=>this.banner='', 5000);
-    },
-
+    flash(msg, err=false) { this.banner=msg; this.bannerErr=err; setTimeout(()=>this.banner='',5000); },
     async loadRuns()       { this.runs = await this.req('GET','/api/runs'); },
     async loadCandidates() { this.candidates = await this.req('GET','/api/candidates'); },
     async loadSchedules()  { this.schedules = await this.req('GET','/api/schedules'); },
@@ -367,80 +532,66 @@ function app() {
         this.flash('Analyze scan started');
         const t = setInterval(async () => {
           await this.loadRuns();
-          const latest = this.runs.find(r => r.type==='analyze');
-          if (latest && latest.status !== 'running') {
+          const latest = this.runs.find(r=>r.type==='analyze');
+          if (latest && latest.status!=='running') {
             clearInterval(t); this.analyzing=false;
             await this.loadCandidates();
-            this.flash(latest.status==='success' ? 'Scan complete' : 'Scan failed', latest.status!=='success');
+            this.flash(latest.status==='success'?'Scan complete':'Scan failed', latest.status!=='success');
           }
         }, 3000);
-      } catch(e) { this.flash('Error: '+e.message, true); this.analyzing=false; }
+      } catch(e) { this.flash('Error: '+e.message,true); this.analyzing=false; }
     },
-
     async triggerUpgrade() {
       this.upgrading = true;
       try {
         const fd = new FormData();
         if (this.upgradeFile) fd.append('csv_file', this.upgradeFile);
-        fd.append('dry_run', this.upgradeDryRun ? 'true' : 'false');
+        fd.append('dry_run', this.upgradeDryRun?'true':'false');
         fd.append('threshold', this.upgradeThreshold);
-        await this.req('POST','/api/runs/upgrade', fd, true);
+        await this.req('POST','/api/runs/upgrade',fd,true);
         this.flash('Upgrade started');
         const t = setInterval(async () => {
           await this.loadRuns();
-          const latest = this.runs.find(r => r.type==='upgrade');
-          if (latest && latest.status !== 'running') {
+          const latest = this.runs.find(r=>r.type==='upgrade');
+          if (latest && latest.status!=='running') {
             clearInterval(t); this.upgrading=false;
             this.upgradeRunId=latest.id; this.upgradeRunStatus=latest.status; this.upgradeLog=latest.log||'';
           }
         }, 2000);
-      } catch(e) { this.flash('Error: '+e.message, true); this.upgrading=false; }
+      } catch(e) { this.flash('Error: '+e.message,true); this.upgrading=false; }
     },
-
     async delCandidate(c) {
       if (!confirm(`Delete "${c.title}" and remove its files from disk?\n\nThis cannot be undone.`)) return;
       try {
         await this.req('DELETE',`/api/candidates/${c.id}`);
-        this.candidates = this.candidates.filter(x => x.id!==c.id);
+        this.candidates=this.candidates.filter(x=>x.id!==c.id);
         this.flash(`Deleted: ${c.title}`);
-      } catch(e) { this.flash('Delete failed: '+e.message, true); }
+      } catch(e) { this.flash('Delete failed: '+e.message,true); }
     },
-
     async addSched() {
       try {
-        await this.req('POST','/api/schedules', this.newSched);
-        await this.loadSchedules(); this.showNewSched=false;
-        this.flash('Schedule saved');
-      } catch(e) { this.flash('Error: '+e.message, true); }
+        await this.req('POST','/api/schedules',this.newSched);
+        await this.loadSchedules(); this.showNewSched=false; this.flash('Schedule saved');
+      } catch(e) { this.flash('Error: '+e.message,true); }
     },
-
     async toggleSched(s) {
-      try {
-        await this.req('PUT',`/api/schedules/${s.id}`, {enabled: !s.enabled});
-        await this.loadSchedules();
-      } catch(e) { this.flash('Error: '+e.message, true); }
+      try { await this.req('PUT',`/api/schedules/${s.id}`,{enabled:!s.enabled}); await this.loadSchedules(); }
+      catch(e) { this.flash('Error: '+e.message,true); }
     },
-
     async delSched(id) {
       if (!confirm('Remove this schedule?')) return;
-      try {
-        await this.req('DELETE',`/api/schedules/${id}`);
-        await this.loadSchedules(); this.flash('Schedule removed');
-      } catch(e) { this.flash('Error: '+e.message, true); }
+      try { await this.req('DELETE',`/api/schedules/${id}`); await this.loadSchedules(); this.flash('Schedule removed'); }
+      catch(e) { this.flash('Error: '+e.message,true); }
     },
-
     async saveConfig() {
-      try {
-        await this.req('POST','/api/config', this.config);
-        this.flash('Settings saved');
-      } catch(e) { this.flash('Error: '+e.message, true); }
+      try { await this.req('POST','/api/config',this.config); this.flash('Settings saved'); }
+      catch(e) { this.flash('Error: '+e.message,true); }
     },
-
     fmt(iso) { return iso ? new Date(iso).toLocaleString() : ''; },
     dur(r) {
-      if (!r.finished_at) return r.status==='running' ? 'running…' : '—';
-      const ms = new Date(r.finished_at)-new Date(r.started_at);
-      return ms<60000 ? (ms/1000).toFixed(0)+'s' : (ms/60000).toFixed(1)+'m';
+      if (!r.finished_at) return r.status==='running'?'running…':'—';
+      const ms=new Date(r.finished_at)-new Date(r.started_at);
+      return ms<60000?(ms/1000).toFixed(0)+'s':(ms/60000).toFixed(1)+'m';
     },
     statusCls(s) {
       return {running:'bg-blue-900/60 text-blue-300',success:'bg-emerald-900/60 text-emerald-300',error:'bg-red-900/60 text-red-300'}[s]||'bg-gray-700 text-gray-300';

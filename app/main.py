@@ -110,7 +110,7 @@ async def trigger_upgrade(
 
 
 # ---------------------------------------------------------------------------
-# Candidates
+# Candidates (from analyze runs)
 # ---------------------------------------------------------------------------
 
 @app.get("/api/candidates")
@@ -154,6 +154,78 @@ def delete_candidate(candidate_id: int):
             "UPDATE candidates SET deleted_at=? WHERE id=?",
             (datetime.now(timezone.utc).isoformat(), candidate_id)
         )
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Library browser (live from Radarr / Sonarr)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/library/movies")
+def library_movies():
+    cfg = _effective_config()
+    if not cfg.get("radarr_api_key"):
+        raise HTTPException(400, "Radarr API key not configured")
+    movies = RadarrClient(cfg["radarr_url"], cfg["radarr_api_key"]).movies()
+    return [
+        {
+            "id": m["id"],
+            "title": m.get("title", ""),
+            "year": m.get("year"),
+            "size_gb": round((m.get("movieFile") or {}).get("size", 0) / 1024 ** 3, 2),
+            "quality": (
+                ((m.get("movieFile") or {}).get("quality") or {}).get("quality", {}).get("name", "")
+                if m.get("hasFile") else "missing"
+            ),
+            "has_file": m.get("hasFile", False),
+            "monitored": m.get("monitored", True),
+        }
+        for m in movies
+    ]
+
+
+@app.delete("/api/library/movies/{movie_id}")
+def delete_library_movie(movie_id: int):
+    cfg = _effective_config()
+    if not cfg.get("radarr_api_key"):
+        raise HTTPException(400, "Radarr API key not configured")
+    try:
+        RadarrClient(cfg["radarr_url"], cfg["radarr_api_key"]).delete(movie_id)
+    except Exception as e:
+        raise HTTPException(500, str(e))
+    return {"ok": True}
+
+
+@app.get("/api/library/series")
+def library_series():
+    cfg = _effective_config()
+    if not cfg.get("sonarr_api_key"):
+        raise HTTPException(400, "Sonarr API key not configured")
+    series_list = SonarrClient(cfg["sonarr_url"], cfg["sonarr_api_key"]).series()
+    return [
+        {
+            "id": s["id"],
+            "title": s.get("title", ""),
+            "year": s.get("year"),
+            "size_gb": round(s.get("statistics", {}).get("sizeOnDisk", 0) / 1024 ** 3, 2),
+            "episode_count": s.get("statistics", {}).get("episodeFileCount", 0),
+            "episode_total": s.get("statistics", {}).get("totalEpisodeCount", 0),
+            "status": s.get("status", ""),
+            "monitored": s.get("monitored", True),
+        }
+        for s in series_list
+    ]
+
+
+@app.delete("/api/library/series/{series_id}")
+def delete_library_series(series_id: int):
+    cfg = _effective_config()
+    if not cfg.get("sonarr_api_key"):
+        raise HTTPException(400, "Sonarr API key not configured")
+    try:
+        SonarrClient(cfg["sonarr_url"], cfg["sonarr_api_key"]).delete(series_id)
+    except Exception as e:
+        raise HTTPException(500, str(e))
     return {"ok": True}
 
 
