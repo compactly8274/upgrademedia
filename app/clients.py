@@ -35,7 +35,7 @@ class RadarrClient(_Base):
         return self._post("/api/v3/command", {"name": "MoviesSearch", "movieIds": [movie_id]})
 
     def delete(self, movie_id: int):
-        self._delete(f"/api/v3/movie/{movie_id}", deleteFiles="true", addImportExclusion="false")
+        self._delete(f"/api/v3/movie/{movie_id}", deleteFiles="true", addImportExclusion="true")
 
 
 class SonarrClient(_Base):
@@ -55,7 +55,7 @@ class SonarrClient(_Base):
         return self._post("/api/v3/command", {"name": "EpisodeSearch", "episodeIds": ep_ids})
 
     def delete(self, series_id: int):
-        self._delete(f"/api/v3/series/{series_id}", deleteFiles="true")
+        self._delete(f"/api/v3/series/{series_id}", deleteFiles="true", addImportListExclusion="true")
 
 
 class PlexClient(_Base):
