@@ -18,7 +18,7 @@ Output columns:
     score        size_gb × days_stale  (higher = better removal candidate)
 
 Usage:
-    python medialyze_analyze.py \\
+    python mediamanager_analyze.py \\
         --plex-url http://192.168.1.x:32400 \\
         --plex-token YOUR_TOKEN \\
         [--min-size-gb 0.5] [--min-days-stale 90] [--top 50] [--output out.csv]
@@ -119,10 +119,8 @@ def gather_movies(client: PlexClient, section_key: str) -> list[dict]:
 
 
 def gather_shows(client: PlexClient, section_key: str) -> list[dict]:
-    # Fetch all episodes to get per-file sizes and per-episode view dates,
-    # then aggregate to the show level.
     episodes = client.all_items(section_key, media_type=4)
-    log.info("  %d episodes across all shows", len(episodes))
+    log.info("  %d episodes across all shows in section", len(episodes))
 
     shows: dict[str, dict] = {}
     for ep in episodes:

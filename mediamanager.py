@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Medialyze — Plex/arr media management toolkit
+Media Manager — Plex/arr media management toolkit
 
 Commands:
   upgrade   Trigger Radarr/Sonarr searches for files below a quality threshold
   analyze   Rank Plex media by size × staleness to surface removal candidates
 
-Run `medialyze.py <command> --help` for per-command options.
+Run `mediamanager.py <command> --help` for per-command options.
 
 Docker examples:
     docker run --rm ghcr.io/compactly8274/upgrademedia analyze \\
@@ -27,11 +27,11 @@ def main() -> int:
     cmd = sys.argv.pop(1)
 
     if cmd == "upgrade":
-        import medialyze_upgrade
-        return medialyze_upgrade.main()
+        import mediamanager_upgrade
+        return mediamanager_upgrade.main()
     if cmd == "analyze":
-        import medialyze_analyze
-        return medialyze_analyze.main()
+        import mediamanager_analyze
+        return mediamanager_analyze.main()
 
     print(f"Unknown command: {cmd!r}\nChoose from: upgrade, analyze", file=sys.stderr)
     return 1

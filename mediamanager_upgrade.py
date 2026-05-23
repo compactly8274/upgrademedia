@@ -5,7 +5,7 @@ Read a Medialyze CSV of low-quality files, match each entry against Radarr
 replace files that fall below a score threshold.
 
 Usage:
-    python medialyze_upgrade.py --csv medialyze_export.csv \\
+    python mediamanager_upgrade.py --csv medialyze_export.csv \\
         --threshold 60 \\
         --radarr-url http://192.168.1.x:7878 --radarr-api-key YOUR_KEY \\
         --sonarr-url http://192.168.1.x:8989 --sonarr-api-key YOUR_KEY \\
@@ -106,7 +106,6 @@ def find_radarr_movie(row: dict, library: list[dict]) -> dict | None:
     csv_title = row.get("title", "")
     csv_year = row.get("year", "")
 
-    # 1. Filename stem match
     if csv_filename:
         csv_stem = _stem(csv_filename)
         for movie in library:
@@ -114,7 +113,6 @@ def find_radarr_movie(row: dict, library: list[dict]) -> dict | None:
             if mf and mf.get("relativePath") and _stem(mf["relativePath"]) == csv_stem:
                 return movie
 
-    # 2. Title + year
     if csv_title and csv_year:
         key = f"{csv_title.strip().lower()} ({csv_year.strip()})"
         for movie in library:
@@ -122,7 +120,6 @@ def find_radarr_movie(row: dict, library: list[dict]) -> dict | None:
             if radarr_key == key:
                 return movie
 
-    # 3. Title only
     if csv_title:
         csv_title_lc = csv_title.strip().lower()
         for movie in library:
@@ -169,7 +166,6 @@ def find_sonarr_series(row: dict, series_list: list[dict]) -> dict | None:
     csv_title = row.get("title", "")
     csv_filename = row.get("filename", "")
 
-    # 1. Filename: check if the series folder name appears in the file stem
     if csv_filename:
         csv_stem = _stem(csv_filename)
         for s in series_list:
@@ -177,7 +173,6 @@ def find_sonarr_series(row: dict, series_list: list[dict]) -> dict | None:
             if folder and folder in csv_stem:
                 return s
 
-    # 2. Exact title match
     if csv_title:
         csv_title_lc = csv_title.strip().lower()
         for s in series_list:

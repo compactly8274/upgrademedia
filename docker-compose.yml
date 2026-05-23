@@ -1,0 +1,21 @@
+services:
+  mediamanager:
+    image: ghcr.io/compactly8274/upgrademedia:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - mediamanager-data:/data
+    environment:
+      RADARR_URL: http://192.168.1.x:7878
+      RADARR_API_KEY: ""
+      SONARR_URL: http://192.168.1.x:8989
+      SONARR_API_KEY: ""
+      PLEX_URL: http://192.168.1.x:32400
+      PLEX_TOKEN: ""
+      QUALITY_THRESHOLD: "60"
+      MIN_SIZE_GB: "0.5"
+      MIN_DAYS_STALE: "90"
+    restart: unless-stopped
+
+volumes:
+  mediamanager-data:
