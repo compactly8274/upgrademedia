@@ -199,7 +199,7 @@ def run_upgrade(params: dict = None, csv_text: str = ""):
 
         threshold = float(params.get("quality_threshold", settings.quality_threshold))
         reader = csv.DictReader(io.StringIO(csv_text))
-        all_rows = [{k.strip().lower(): v.strip() for k, v in row.items()} for row in reader]
+        all_rows = [{k.strip().lower(): (v or "").strip() for k, v in row.items()} for row in reader]
         rows = [r for r in all_rows if _safe_float(r.get("score", "999")) < threshold]
 
         movie_rows = [r for r in rows if r.get("type", "").lower() == "movie"]

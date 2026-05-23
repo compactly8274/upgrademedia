@@ -4,7 +4,8 @@ import requests
 
 class _Base:
     def __init__(self, base_url: str, headers: dict):
-        self.base = base_url.rstrip("/")
+        # Strip angle brackets users sometimes paste from markdown/docs (e.g. <http://...>)
+        self.base = base_url.strip().strip("<>").rstrip("/")
         self.session = requests.Session()
         self.session.headers.update(headers)
 
