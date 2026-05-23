@@ -198,29 +198,67 @@ def run_upgrade(params: dict = None, csv_text: str = ""):
             return run_id
 
         threshold = float(params.get("quality_threshold", settings.quality_threshold))
-        reader = csv.DictReader(io.StringIO(csv_text))
-        all_rows = [{k.strip().lower(): (v or "").strip() for k, v in row.items()} for row in reader]
-        rows = [r for r in all_rows if _safe_float(r.get("score", "999")) < threshold]
 
-        movie_rows = [r for r in rows if r.get("type", "").lower() == "movie"]
-        ep_rows = [r for r in rows if r.get("type", "").lower() in ("episode", "series", "show", "tv")]
+        # Strip Medialyze comment lines (lines starting with #) before CSV parsing
+        csv_lines = [l for l in csv_text.splitlines() if not l.lstrip().startswith("#")]
+        reader = csv.DictReader(io.StringIO("\n".join(csv_lines)))
+        all_rows = [{k.strip().lower(): (v or "").strip() for k, v in row.items()} for row in reader]
+
+        # Real Medialyze CSV uses quality_score column; fall back to score for compatibility
+        def _row_score(r):
+            return _safe_float(r.get("quality_score") or r.get("score", "999"))
+
+        rows = [r for r in all_rows if _row_score(r) < threshold]
+
+        # Medialyze CSV has no type column — detect from content_category, series_title, or path
+        def _is_tv(r):
+            cat = (r.get("content_category") or "").lower()
+            if "movie" in cat:
+                return False
+            if any(w in cat for w in ("episode", "show", "series", "tv")):
+                return True
+            if r.get("series_title"):
+                return True
+            return "season" in (r.get("relative_path", "")).lower()
+
+        movie_rows = [r for r in rows if not _is_tv(r)]
+        ep_rows = [r for r in rows if _is_tv(r)]
         dry_run = str(params.get("dry_run", "false")).lower() in ("true", "1", "yes")
         delay = float(params.get("delay", 0.5))
         matched = unmatched = triggered = 0
 
         if movie_rows and params.get("radarr_api_key"):
             radarr = RadarrClient(str(params["radarr_url"]), str(params["radarr_api_key"]))
-            library = {m.get("title", "").lower(): m for m in radarr.movies()}
+            all_movies = radarr.movies()
+            title_lookup = {m.get("title", "").lower(): m for m in all_movies}
+            # Also index by file stem so we can match on filename from the CSV
+            file_stem_lookup = {}
+            for m in all_movies:
+                mf = m.get("movieFile") or {}
+                stem = Path(mf.get("relativePath", "")).stem.lower()
+                if stem:
+                    file_stem_lookup[stem] = m
+
             for row in movie_rows:
-                movie = library.get(row.get("title", "").lower())
+                filename = row.get("filename", "")
+                rel_path = row.get("relative_path", "")
+                file_stem = Path(filename).stem.lower() if filename else ""
+                rel_stem = Path(rel_path).stem.lower() if rel_path else ""
+                score = row.get("quality_score") or row.get("score", "?")
+                movie = (
+                    file_stem_lookup.get(file_stem)
+                    or file_stem_lookup.get(rel_stem)
+                    or title_lookup.get(file_stem)
+                    or title_lookup.get(rel_stem)
+                )
                 if not movie:
                     unmatched += 1
-                    logs.append(f"No match: {row.get('title')} (score={row.get('score')})")
+                    logs.append(f"No match: {filename or rel_path} (quality_score={score})")
                     continue
                 matched += 1
                 label = f"{movie['title']} ({movie.get('year', '?')})"
                 if dry_run:
-                    logs.append(f"[DRY-RUN] {label}")
+                    logs.append(f"[DRY-RUN] {label} (quality_score={score})")
                 else:
                     try:
                         radarr.search(movie["id"])
@@ -235,14 +273,17 @@ def run_upgrade(params: dict = None, csv_text: str = ""):
             sonarr = SonarrClient(str(params["sonarr_url"]), str(params["sonarr_api_key"]))
             series_lib = {s.get("title", "").lower(): s for s in sonarr.series()}
             for row in ep_rows:
-                series = series_lib.get(row.get("title", "").lower())
+                # Medialyze provides series_title for TV content
+                series_title = (row.get("series_title") or row.get("title", "")).lower()
+                score = row.get("quality_score") or row.get("score", "?")
+                series = series_lib.get(series_title)
                 if not series:
                     unmatched += 1
-                    logs.append(f"No match: {row.get('title')}")
+                    logs.append(f"No match: {series_title} (quality_score={score})")
                     continue
                 matched += 1
                 if dry_run:
-                    logs.append(f"[DRY-RUN] {series['title']}")
+                    logs.append(f"[DRY-RUN] {series['title']} (quality_score={score})")
                 else:
                     try:
                         sonarr.search_series(series["id"])
