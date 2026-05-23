@@ -21,7 +21,7 @@ async def lifespan(_app: FastAPI):
     sched.stop()
 
 
-app = FastAPI(title="Medialyze", lifespan=lifespan)
+app = FastAPI(title="Media Manager", lifespan=lifespan)
 
 
 # ---------------------------------------------------------------------------
