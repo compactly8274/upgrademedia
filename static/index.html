@@ -506,14 +506,23 @@
   <!-- ═══════════════════════════════════ SCAN ═══════════════════════════════════ -->
   <section x-show="activeTab==='scan'" x-cloak>
     <div class="flex items-center justify-between mb-4">
-      <h2 class="text-base sm:text-lg font-semibold">File Scanner</h2>
-      <div class="flex items-center gap-2">
-        <span x-show="scanning" class="text-xs text-blue-400 animate-pulse">Scanning&hellip;</span>
-        <button @click="triggerScan()" :disabled="scanning||stripping"
-          class="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 px-3 py-2 rounded-lg text-sm font-medium transition-colors">
-          <span x-text="scanning ? 'Scanning…' : 'Scan Now'"></span>
-        </button>
+      <div class="flex items-center gap-3 min-w-0">
+        <h2 class="text-base sm:text-lg font-semibold shrink-0">File Scanner</h2>
+        <template x-if="scanRunProgress">
+          <div class="flex items-center gap-2 min-w-0">
+            <div class="w-24 sm:w-36 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+              <div class="h-full bg-blue-500 rounded-full transition-all"
+                :style="`width:${Math.round((scanRunProgress.done||0)/scanRunProgress.total*100)}%`"></div>
+            </div>
+            <span class="text-xs text-blue-400 tabular-nums whitespace-nowrap"
+              x-text="(scanRunProgress.done||0) + ' / ' + scanRunProgress.total"></span>
+          </div>
+        </template>
       </div>
+      <button @click="triggerScan()" :disabled="scanning||stripping"
+        class="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 px-3 py-2 rounded-lg text-sm font-medium transition-colors shrink-0">
+        <span x-text="scanning ? 'Scanning…' : 'Scan Now'"></span>
+      </button>
     </div>
 
     <!-- Sub-tabs -->
@@ -531,16 +540,22 @@
 
     <!-- ── FILES ── -->
     <div x-show="scanTab==='files'">
-      <!-- Filters -->
-      <div class="flex flex-wrap gap-2 mb-3">
+      <!-- Search + filter toggle -->
+      <div class="flex gap-2 mb-2">
         <input type="search" x-model="scanSearch" placeholder="Search filenames…"
-          class="bg-gray-700 rounded-lg px-3 py-2 text-sm border border-gray-600 focus:border-blue-500 outline-none w-full sm:w-56">
-        <label class="flex items-center gap-2 bg-gray-800 px-3 py-2 rounded-lg border border-gray-700 text-sm">
+          class="bg-gray-700 rounded-lg px-3 py-2 text-sm border border-gray-600 focus:border-blue-500 outline-none flex-1 min-w-0">
+        <button @click="scanFiltersOpen=!scanFiltersOpen"
+          :class="scanFiltersOpen||scanMaxScore||scanCodec||scanNonEnglish ? 'bg-blue-700 text-white' : 'bg-gray-700 text-gray-400 hover:text-white'"
+          class="px-3 py-2 rounded-lg text-sm border border-gray-600 shrink-0">Filters</button>
+        <span class="flex items-center text-xs text-gray-500 shrink-0" x-text="filteredScanFiles.length + ' files'"></span>
+      </div>
+      <div x-show="scanFiltersOpen" x-cloak class="flex flex-wrap gap-2 mb-2">
+        <label class="flex items-center gap-2 bg-gray-800 px-3 py-1.5 rounded-lg border border-gray-700 text-sm">
           <span class="text-gray-400 text-xs">Max score</span>
           <input type="number" x-model="scanMaxScore" min="0" max="100" step="1" placeholder="100"
             class="bg-transparent w-14 outline-none text-right text-sm">
         </label>
-        <label class="flex items-center gap-2 bg-gray-800 px-3 py-2 rounded-lg border border-gray-700 text-sm">
+        <label class="flex items-center gap-2 bg-gray-800 px-3 py-1.5 rounded-lg border border-gray-700 text-sm">
           <span class="text-gray-400 text-xs">Codec</span>
           <select x-model="scanCodec" class="bg-transparent outline-none text-sm">
             <option value="">All</option>
@@ -549,11 +564,10 @@
             </template>
           </select>
         </label>
-        <label class="flex items-center gap-2 bg-gray-800 px-3 py-2 rounded-lg border border-gray-700 text-sm cursor-pointer">
+        <label class="flex items-center gap-2 bg-gray-800 px-3 py-1.5 rounded-lg border border-gray-700 text-sm cursor-pointer">
           <input type="checkbox" x-model="scanNonEnglish">
           <span class="text-gray-400 text-xs">Non-English streams</span>
         </label>
-        <span class="flex items-center text-xs text-gray-500" x-text="filteredScanFiles.length + ' files'"></span>
       </div>
 
       <!-- Bulk strip bar -->
@@ -777,66 +791,6 @@
     </div>
   </section>
 
-  <!-- ═══════════════════════════════════ SCHEDULES ═══════════════════════════════════ -->
-  <section x-show="activeTab==='schedules'" x-cloak>
-    <div class="flex items-center justify-between mb-4">
-      <h2 class="text-base sm:text-lg font-semibold">Scheduled Jobs</h2>
-      <button @click="showNewSched=!showNewSched"
-        class="bg-blue-600 hover:bg-blue-500 px-3 py-2 rounded-lg text-sm font-medium transition-colors">+ Add</button>
-    </div>
-    <div x-show="showNewSched" x-cloak class="bg-gray-800 rounded-xl border border-gray-700 p-4 mb-4">
-      <div class="flex flex-col sm:flex-row gap-3 mb-3">
-        <div class="flex-1">
-          <label class="block text-xs text-gray-400 mb-1">Job Type</label>
-          <select x-model="newSched.job_type" class="bg-gray-700 rounded-lg px-3 py-2 w-full text-sm border border-gray-600 outline-none">
-            <option value="analyze">Analyze</option><option value="upgrade">Upgrade</option>
-          </select>
-        </div>
-        <div class="flex-1">
-          <label class="block text-xs text-gray-400 mb-1">Cron Expression</label>
-          <input x-model="newSched.cron" placeholder="0 3 * * *"
-            class="bg-gray-700 rounded-lg px-3 py-2 w-full text-sm font-mono border border-gray-600 focus:border-blue-500 outline-none">
-        </div>
-      </div>
-      <p class="text-xs text-gray-500 mb-3">
-        <code class="bg-gray-700 px-1 rounded">0 3 * * *</code> = daily 3am &nbsp;&bull;&nbsp;
-        <code class="bg-gray-700 px-1 rounded">0 3 * * 0</code> = weekly Sunday &nbsp;&bull;&nbsp;
-        <code class="bg-gray-700 px-1 rounded">0 */6 * * *</code> = every 6 hours
-      </p>
-      <div class="flex gap-2">
-        <button @click="addSched()" class="bg-emerald-700 hover:bg-emerald-600 px-4 py-1.5 rounded-lg text-sm">Save</button>
-        <button @click="showNewSched=false" class="text-gray-400 hover:text-white px-4 py-1.5 text-sm">Cancel</button>
-      </div>
-    </div>
-    <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
-      <div class="overflow-x-auto scrollbar-none">
-        <table class="w-full text-sm min-w-[360px]">
-          <thead><tr class="border-b border-gray-700 text-gray-400 text-xs uppercase tracking-wide">
-            <th class="text-left px-4 py-2">Type</th><th class="text-left px-4 py-2">Cron</th>
-            <th class="text-left px-4 py-2">Status</th><th class="px-4 py-2"></th>
-          </tr></thead>
-          <tbody>
-            <template x-for="s in schedules" :key="s.id">
-              <tr class="border-b border-gray-700/50">
-                <td class="px-4 py-2 capitalize font-medium" x-text="s.job_type"></td>
-                <td class="px-4 py-2 font-mono text-gray-300 text-xs" x-text="s.cron"></td>
-                <td class="px-4 py-2">
-                  <button @click="toggleSched(s)"
-                    :class="s.enabled?'bg-emerald-900 text-emerald-300 border-emerald-700':'bg-gray-700 text-gray-400 border-gray-600'"
-                    class="px-2 py-0.5 rounded-full text-xs border" x-text="s.enabled?'On':'Off'"></button>
-                </td>
-                <td class="px-4 py-2 text-right">
-                  <button @click="delSched(s.id)" class="text-red-400 hover:text-red-300 text-xs">Remove</button>
-                </td>
-              </tr>
-            </template>
-            <tr x-show="!schedules.length"><td colspan="4" class="px-4 py-8 text-center text-gray-500">No schedules configured</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </section>
-
   <!-- ═══════════════════════════════════ HISTORY ═══════════════════════════════════ -->
   <section x-show="activeTab==='history'" x-cloak>
     <h2 class="text-base sm:text-lg font-semibold mb-4">Run History</h2>
@@ -982,7 +936,7 @@
   <!-- ═══════════════════════════════════ SETTINGS ═══════════════════════════════════ -->
   <section x-show="activeTab==='settings'" x-cloak>
     <h2 class="text-base sm:text-lg font-semibold mb-4">Settings</h2>
-    <form @submit.prevent="saveConfig()" class="space-y-4">
+    <form @submit.prevent="saveConfig()" class="space-y-4 mb-8">
       <template x-for="f in configFields" :key="f.key">
         <div>
           <label class="block text-sm text-gray-400 mb-1" x-text="f.label"></label>
@@ -1002,6 +956,66 @@
       </template>
       <button type="submit" class="w-full sm:w-auto bg-blue-600 hover:bg-blue-500 px-6 py-2.5 rounded-lg text-sm font-medium transition-colors">Save Settings</button>
     </form>
+
+    <!-- Schedules -->
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="text-sm font-semibold text-gray-300">Scheduled Jobs</h3>
+      <button @click="showNewSched=!showNewSched"
+        class="bg-blue-600 hover:bg-blue-500 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors">+ Add</button>
+    </div>
+    <div x-show="showNewSched" x-cloak class="bg-gray-800 rounded-xl border border-gray-700 p-4 mb-3">
+      <div class="flex flex-col sm:flex-row gap-3 mb-3">
+        <div class="flex-1">
+          <label class="block text-xs text-gray-400 mb-1">Job Type</label>
+          <select x-model="newSched.job_type" class="bg-gray-700 rounded-lg px-3 py-2 w-full text-sm border border-gray-600 outline-none">
+            <option value="analyze">Analyze</option>
+            <option value="upgrade">Upgrade</option>
+            <option value="scan">Scan</option>
+          </select>
+        </div>
+        <div class="flex-1">
+          <label class="block text-xs text-gray-400 mb-1">Cron Expression</label>
+          <input x-model="newSched.cron" placeholder="0 3 * * *"
+            class="bg-gray-700 rounded-lg px-3 py-2 w-full text-sm font-mono border border-gray-600 focus:border-blue-500 outline-none">
+        </div>
+      </div>
+      <p class="text-xs text-gray-500 mb-3">
+        <code class="bg-gray-700 px-1 rounded">0 3 * * *</code> daily 3am &nbsp;&bull;&nbsp;
+        <code class="bg-gray-700 px-1 rounded">0 3 * * 0</code> weekly Sun &nbsp;&bull;&nbsp;
+        <code class="bg-gray-700 px-1 rounded">0 */6 * * *</code> every 6h
+      </p>
+      <div class="flex gap-2">
+        <button @click="addSched()" class="bg-emerald-700 hover:bg-emerald-600 px-4 py-1.5 rounded-lg text-sm">Save</button>
+        <button @click="showNewSched=false" class="text-gray-400 hover:text-white px-4 py-1.5 text-sm">Cancel</button>
+      </div>
+    </div>
+    <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
+      <div class="overflow-x-auto scrollbar-none">
+        <table class="w-full text-sm min-w-[360px]">
+          <thead><tr class="border-b border-gray-700 text-gray-400 text-xs uppercase tracking-wide">
+            <th class="text-left px-4 py-2">Type</th><th class="text-left px-4 py-2">Cron</th>
+            <th class="text-left px-4 py-2">Status</th><th class="px-4 py-2"></th>
+          </tr></thead>
+          <tbody>
+            <template x-for="s in schedules" :key="s.id">
+              <tr class="border-b border-gray-700/50">
+                <td class="px-4 py-1.5 capitalize font-medium" x-text="s.job_type"></td>
+                <td class="px-4 py-1.5 font-mono text-gray-300 text-xs" x-text="s.cron"></td>
+                <td class="px-4 py-1.5">
+                  <button @click="toggleSched(s)"
+                    :class="s.enabled?'bg-emerald-900 text-emerald-300 border-emerald-700':'bg-gray-700 text-gray-400 border-gray-600'"
+                    class="px-2 py-0.5 rounded-full text-xs border" x-text="s.enabled?'On':'Off'"></button>
+                </td>
+                <td class="px-4 py-1.5 text-right">
+                  <button @click="delSched(s.id)" class="text-red-400 hover:text-red-300 text-xs">Remove</button>
+                </td>
+              </tr>
+            </template>
+            <tr x-show="!schedules.length"><td colspan="4" class="px-4 py-6 text-center text-gray-500 text-sm">No schedules configured</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
   </section>
 
 </main>
@@ -1009,7 +1023,7 @@
 <script>
 function app() {
   return {
-    tabs: ['dashboard','library','analyze','upgrade','scan','schedules','history','settings'],
+    tabs: ['dashboard','library','analyze','upgrade','scan','history','settings'],
     activeTab: 'dashboard',
     banner: '', bannerErr: false,
     runs: [], candidates: [], schedules: [], config: {},
@@ -1025,6 +1039,7 @@ function app() {
     scanFiles: [], scanDuplicates: [], scanStats: null,
     scanTab: 'files', scanLoading: false, scanning: false, stripping: false,
     scanSearch: '', scanMaxScore: '', scanCodec: '', scanNonEnglish: false,
+    scanFiltersOpen: false,
     selectedScanFiles: {}, expandedScanFile: null,
 
     // Library
@@ -1064,7 +1079,7 @@ function app() {
     ],
 
     tabIcon(t) {
-      return {dashboard:'⊞',library:'🎬',analyze:'🔍',upgrade:'⬆',scan:'🎞',schedules:'🕐',history:'📋',settings:'⚙'}[t]||'●';
+      return {dashboard:'⊞',library:'🎬',analyze:'🔍',upgrade:'⬆',scan:'🎞',history:'📋',settings:'⚙'}[t]||'●';
     },
 
     // ── Computed ──────────────────────────────────────────────────────────────
@@ -1138,12 +1153,81 @@ function app() {
       const s = new Set(this.scanFiles.map(f => f.video_codec).filter(Boolean));
       return [...s].sort();
     },
+    get scanRunProgress() {
+      const r = this.runs.find(x => x.type === 'scan' && x.status === 'running');
+      if (!r) return null;
+      try {
+        const s = typeof r.summary === 'string' ? JSON.parse(r.summary) : (r.summary || {});
+        return s.total ? s : null;
+      } catch { return null; }
+    },
 
     // ── Init ──────────────────────────────────────────────────────────────────
     async init() {
       await Promise.all([this.loadRuns(),this.loadCandidates(),this.loadSchedules(),this.loadConfig()]);
       this.loadStats();
       setInterval(()=>this.loadRuns(),15000);
+      // Resume polling for any jobs that were already running before this page load
+      this._resumeRunningJobs();
+    },
+
+    _resumeRunningJobs() {
+      const running = this.runs.filter(r => r.status === 'running');
+      for (const r of running) {
+        if (r.type === 'scan')    this._resumeScan();
+        if (r.type === 'strip')   this._resumeStrip();
+        if (r.type === 'analyze') this._resumeAnalyze();
+        if (r.type === 'upgrade') this._resumeUpgrade();
+      }
+    },
+    _resumeScan() {
+      if (this.scanning) return;
+      this.scanning = true;
+      if (this.activeTab === 'scan') this.loadScanFiles();
+      const poll = setInterval(async()=>{
+        await this.loadRuns(); await this.loadScanFiles();
+        const r = this.runs.find(x=>x.type==='scan');
+        if (!r || r.status !== 'running') {
+          clearInterval(poll); this.scanning = false;
+          this.loadScanStats();
+        }
+      },2000);
+    },
+    _resumeStrip() {
+      if (this.stripping) return;
+      this.stripping = true;
+      const poll = setInterval(async()=>{
+        await this.loadRuns();
+        const r = this.runs.find(x=>x.type==='strip');
+        if (!r || r.status !== 'running') {
+          clearInterval(poll); this.stripping = false;
+          this.loadScanFiles();
+        }
+      },2000);
+    },
+    _resumeAnalyze() {
+      if (this.analyzing) return;
+      this.analyzing = true;
+      const poll = setInterval(async()=>{
+        await this.loadRuns();
+        const r = this.runs.find(x=>x.type==='analyze');
+        if (!r || r.status !== 'running') {
+          clearInterval(poll); this.analyzing = false;
+          await this.loadCandidates();
+        }
+      },3000);
+    },
+    _resumeUpgrade() {
+      if (this.upgrading) return;
+      this.upgrading = true;
+      const poll = setInterval(async()=>{
+        await this.loadRuns();
+        const r = this.runs.find(x=>x.type==='upgrade');
+        if (!r || r.status !== 'running') {
+          clearInterval(poll); this.upgrading = false;
+          this.upgradeRunId=r?.id; this.upgradeRunStatus=r?.status||''; this.upgradeLog=r?.log||'';
+        }
+      },2000);
     },
 
     setTab(t) {
@@ -1378,14 +1462,14 @@ function app() {
         this.flash('File scan started');
         const poll = setInterval(async()=>{
           await this.loadRuns();
+          await this.loadScanFiles();
           const r = this.runs.find(x=>x.type==='scan');
           if (r && r.status !== 'running') {
             clearInterval(poll); this.scanning = false;
-            await this.loadScanFiles();
             this.loadScanStats();
             this.flash(r.status==='success'?'Scan complete':'Scan failed', r.status!=='success');
           }
-        },3000);
+        },2000);
       } catch(e) { this.flash('Error: '+e.message,true); this.scanning=false; }
     },
     async triggerStrip() {

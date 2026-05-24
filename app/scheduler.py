@@ -18,12 +18,16 @@ def _job_upgrade():
     tasks.run_upgrade()
 
 
+def _job_scan():
+    tasks.run_scan()
+
+
 def load_schedules():
     _scheduler.remove_all_jobs()
     with db() as conn:
         rows = conn.execute("SELECT * FROM schedules WHERE enabled=1").fetchall()
     for row in rows:
-        func = _job_analyze if row["job_type"] == "analyze" else _job_upgrade
+        func = {'analyze': _job_analyze, 'upgrade': _job_upgrade, 'scan': _job_scan}.get(row["job_type"], _job_analyze)
         try:
             _scheduler.add_job(func, CronTrigger.from_crontab(row["cron"]),
                                id=str(row["id"]), replace_existing=True)
