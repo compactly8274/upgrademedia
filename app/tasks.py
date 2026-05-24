@@ -48,12 +48,36 @@ def _effective_config(overrides: dict = None) -> dict:
         "quality_threshold": settings.quality_threshold,
         "min_size_gb": settings.min_size_gb,
         "min_days_stale": settings.min_days_stale,
+        "webhook_url": settings.webhook_url,
+        "webhook_type": settings.webhook_type,
     }
     for row in rows:
         cfg[row["key"]] = row["value"]
     if overrides:
         cfg.update(overrides)
     return cfg
+
+
+# ---------------------------------------------------------------------------
+# Notifications
+# ---------------------------------------------------------------------------
+
+def _notify(cfg: dict, title: str, body: str):
+    url = str(cfg.get("webhook_url") or "").strip()
+    if not url:
+        return
+    wtype = str(cfg.get("webhook_type") or "discord").lower().strip()
+    try:
+        if wtype == "discord":
+            requests.post(url, json={"embeds": [{"title": title, "description": body, "color": 0x3b82f6}]}, timeout=10)
+        elif wtype == "ntfy":
+            requests.post(url, data=body.encode(), headers={"Title": title, "Priority": "default"}, timeout=10)
+        elif wtype == "gotify":
+            requests.post(url, json={"title": title, "message": body, "priority": 5}, timeout=10)
+        else:
+            requests.post(url, json={"title": title, "message": body}, timeout=10)
+    except Exception as exc:
+        log.warning("Notification failed: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -177,9 +201,12 @@ def run_analyze(params: dict = None):
                 )
 
         _finish_run(run_id, "success", {"scanned": len(rows), "candidates": len(candidates)})
+        _notify(params, "Media Manager — Analyze complete",
+                f"Scanned {len(rows)} items, found {len(candidates)} removal candidates.")
     except Exception as exc:
         log.exception("Analyze task failed")
         _finish_run(run_id, "error", {}, str(exc))
+        _notify(params, "Media Manager — Analyze failed", str(exc))
     return run_id
 
 
@@ -311,9 +338,13 @@ def run_upgrade(params: dict = None, csv_text: str = ""):
         _finish_run(run_id, "success",
                     {"matched": matched, "unmatched": unmatched, "triggered": triggered, "dry_run": dry_run},
                     "\n".join(logs))
+        suffix = " (dry run)" if dry_run else ""
+        _notify(params, f"Media Manager — Upgrade complete{suffix}",
+                f"Matched {matched}, triggered {triggered}, unmatched {unmatched}.")
     except Exception as exc:
         log.exception("Upgrade task failed")
         _finish_run(run_id, "error", {}, str(exc))
+        _notify(params, "Media Manager — Upgrade failed", str(exc))
     return run_id
 
 
