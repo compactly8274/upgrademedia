@@ -5,9 +5,12 @@ services:
       - "8000:8000"
     volumes:
       - mediamanager-data:/data
-      # Mount your media directories (read-only for scanning, read-write for stream stripping):
-      # - /your/movies:/movies
-      # - /your/tv:/tv
+      # Mount your actual media directories so the scanner can read files directly.
+      # Use the same paths in MEDIA_PATHS below.
+      # Tip: read-only (:ro) is fine for scanning; remove :ro if you want stream stripping to work.
+      # - /your/path/movies:/movies
+      # - /your/path/tv:/tv
+      # - /your/path/4k:/4k
     environment:
       RADARR_URL: http://192.168.1.x:7878
       RADARR_API_KEY: ""
@@ -18,9 +21,12 @@ services:
       QUALITY_THRESHOLD: "60"
       MIN_SIZE_GB: "0.5"
       MIN_DAYS_STALE: "90"
-      # Comma-separated paths to scan for media files (must match volume mounts above):
+      # Comma-separated paths the scanner walks. Must match the container-side mount paths above.
+      # The scanner reads files directly — Radarr/Sonarr are optional (only used to enable the
+      # per-file Search button). Leave Radarr/Sonarr blank and scanning still works.
+      # Example: MEDIA_PATHS: "/movies,/tv,/4k"
       MEDIA_PATHS: ""
-      # Webhook notifications (Discord, Ntfy, Gotify, or generic JSON):
+      # Webhook notifications (optional):
       WEBHOOK_URL: ""
       WEBHOOK_TYPE: "discord"
     restart: unless-stopped
