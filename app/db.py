@@ -57,4 +57,30 @@ def init_db():
                 cron TEXT NOT NULL,
                 enabled INTEGER NOT NULL DEFAULT 1
             );
+            CREATE TABLE IF NOT EXISTS scan_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                path TEXT UNIQUE NOT NULL,
+                filename TEXT NOT NULL,
+                size_bytes INTEGER,
+                mtime REAL,
+                file_hash TEXT,
+                duration_seconds REAL,
+                video_codec TEXT,
+                width INTEGER,
+                height INTEGER,
+                video_bitrate_kbps REAL,
+                hdr_type TEXT,
+                audio_codec TEXT,
+                audio_channels INTEGER,
+                non_english_audio INTEGER DEFAULT 0,
+                non_english_subs INTEGER DEFAULT 0,
+                audio_langs TEXT,
+                sub_langs TEXT,
+                quality_score REAL,
+                score_breakdown TEXT,
+                scanned_at TEXT,
+                stripped_at TEXT,
+                radarr_id INTEGER,
+                sonarr_id INTEGER
+            );
         """)

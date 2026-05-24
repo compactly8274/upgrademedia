@@ -14,5 +14,6 @@ class Settings:
         self.min_days_stale = int(os.getenv("MIN_DAYS_STALE", "90"))
         self.webhook_url = os.getenv("WEBHOOK_URL", "")
         self.webhook_type = os.getenv("WEBHOOK_TYPE", "discord")
+        self.media_paths = os.getenv("MEDIA_PATHS", "")
 
 settings = Settings()

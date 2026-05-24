@@ -2,6 +2,7 @@ import json
 import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from typing import List
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.staticfiles import StaticFiles
@@ -43,6 +44,7 @@ def _effective_config(overrides: dict = None) -> dict:
         "min_days_stale": settings.min_days_stale,
         "webhook_url": settings.webhook_url,
         "webhook_type": settings.webhook_type,
+        "media_paths": settings.media_paths,
     }
     for row in rows:
         cfg[row["key"]] = row["value"]
@@ -393,6 +395,142 @@ def delete_schedule(schedule_id: int):
     with db() as conn:
         conn.execute("DELETE FROM schedules WHERE id=?", (schedule_id,))
     sched.load_schedules()
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Scanner
+# ---------------------------------------------------------------------------
+
+@app.post("/api/runs/scan")
+def trigger_scan(body: dict = {}):
+    params = _effective_config(body)
+    threading.Thread(target=tasks.run_scan, args=(params,), daemon=True).start()
+    return {"queued": True}
+
+
+@app.post("/api/runs/strip")
+def trigger_strip(body: dict = {}):
+    file_ids = body.get("file_ids", [])
+    if not file_ids:
+        raise HTTPException(400, "file_ids required")
+    params = _effective_config()
+    threading.Thread(target=tasks.run_strip, args=(file_ids, params), daemon=True).start()
+    return {"queued": True}
+
+
+@app.get("/api/scan/files")
+def list_scan_files(min_score: float = None, max_score: float = None,
+                    codec: str = None, non_english: bool = None,
+                    limit: int = 2000):
+    clauses = ["1=1"]
+    args = []
+    if min_score is not None:
+        clauses.append("quality_score >= ?"); args.append(min_score)
+    if max_score is not None:
+        clauses.append("quality_score <= ?"); args.append(max_score)
+    if codec:
+        clauses.append("video_codec = ?"); args.append(codec)
+    if non_english is not None and non_english:
+        clauses.append("(non_english_audio > 0 OR non_english_subs > 0)")
+    args.append(limit)
+    with db() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM scan_files WHERE {' AND '.join(clauses)} ORDER BY quality_score ASC LIMIT ?",
+            args
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.get("/api/scan/duplicates")
+def list_duplicates():
+    with db() as conn:
+        rows = conn.execute("""
+            SELECT f.*
+            FROM scan_files f
+            JOIN (
+                SELECT file_hash
+                FROM scan_files
+                WHERE file_hash IS NOT NULL AND file_hash != ''
+                GROUP BY file_hash
+                HAVING COUNT(*) > 1
+            ) dupes ON f.file_hash = dupes.file_hash
+            ORDER BY f.file_hash, f.quality_score DESC
+        """).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.get("/api/scan/stats")
+def scan_stats():
+    with db() as conn:
+        row = conn.execute("""
+            SELECT
+                COUNT(*) as total_files,
+                SUM(size_bytes) as total_bytes,
+                AVG(quality_score) as avg_score,
+                SUM(CASE WHEN non_english_audio > 0 OR non_english_subs > 0 THEN 1 ELSE 0 END) as has_non_english,
+                SUM(CASE WHEN quality_score < 50 THEN 1 ELSE 0 END) as low_quality,
+                SUM(CASE WHEN quality_score >= 50 AND quality_score < 75 THEN 1 ELSE 0 END) as mid_quality,
+                SUM(CASE WHEN quality_score >= 75 THEN 1 ELSE 0 END) as high_quality
+            FROM scan_files
+        """).fetchone()
+        by_codec = conn.execute("""
+            SELECT video_codec, COUNT(*) as count, SUM(size_bytes) as bytes
+            FROM scan_files
+            GROUP BY video_codec
+            ORDER BY count DESC
+        """).fetchall()
+        dup_count = conn.execute("""
+            SELECT COUNT(*) as n FROM scan_files
+            WHERE file_hash IN (
+                SELECT file_hash FROM scan_files
+                WHERE file_hash IS NOT NULL AND file_hash != ''
+                GROUP BY file_hash HAVING COUNT(*) > 1
+            )
+        """).fetchone()
+    result = dict(row) if row else {}
+    result["by_codec"] = [dict(r) for r in by_codec]
+    result["duplicate_files"] = dup_count["n"] if dup_count else 0
+    return result
+
+
+@app.delete("/api/scan/files/{file_id}")
+def delete_scan_file(file_id: int):
+    with db() as conn:
+        row = conn.execute("SELECT * FROM scan_files WHERE id=?", (file_id,)).fetchone()
+    if not row:
+        raise HTTPException(404)
+    with db() as conn:
+        conn.execute("DELETE FROM scan_files WHERE id=?", (file_id,))
+    return {"ok": True}
+
+
+@app.post("/api/scan/files/{file_id}/search")
+def search_scan_file(file_id: int):
+    with db() as conn:
+        row = conn.execute("SELECT * FROM scan_files WHERE id=?", (file_id,)).fetchone()
+    if not row:
+        raise HTTPException(404)
+    row = dict(row)
+    cfg = _effective_config()
+    errors = []
+    triggered = False
+    if row.get("radarr_id") and cfg.get("radarr_api_key"):
+        try:
+            RadarrClient(cfg["radarr_url"], cfg["radarr_api_key"]).search(int(row["radarr_id"]))
+            triggered = True
+        except Exception as e:
+            errors.append(f"Radarr: {e}")
+    if row.get("sonarr_id") and cfg.get("sonarr_api_key"):
+        try:
+            SonarrClient(cfg["sonarr_url"], cfg["sonarr_api_key"]).search_series(int(row["sonarr_id"]))
+            triggered = True
+        except Exception as e:
+            errors.append(f"Sonarr: {e}")
+    if errors:
+        raise HTTPException(500, detail="; ".join(errors))
+    if not triggered:
+        raise HTTPException(400, "No Radarr/Sonarr ID linked to this file")
     return {"ok": True}
 
 

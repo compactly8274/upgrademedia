@@ -503,6 +503,280 @@
     </div>
   </section>
 
+  <!-- ═══════════════════════════════════ SCAN ═══════════════════════════════════ -->
+  <section x-show="activeTab==='scan'" x-cloak>
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-base sm:text-lg font-semibold">File Scanner</h2>
+      <div class="flex items-center gap-2">
+        <span x-show="scanning" class="text-xs text-blue-400 animate-pulse">Scanning&hellip;</span>
+        <button @click="triggerScan()" :disabled="scanning||stripping"
+          class="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 px-3 py-2 rounded-lg text-sm font-medium transition-colors">
+          <span x-text="scanning ? 'Scanning…' : 'Scan Now'"></span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Sub-tabs -->
+    <div class="flex gap-1 mb-4 bg-gray-800 border border-gray-700 rounded-lg p-1">
+      <template x-for="st in ['files','duplicates','stats']" :key="st">
+        <button @click="setScanTab(st)"
+          :class="scanTab===st ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'"
+          class="flex-1 sm:flex-none px-4 py-1.5 rounded text-sm font-medium text-center capitalize">
+          <span x-text="st"></span>
+          <span x-show="st==='files' && scanFiles.length" class="text-xs text-gray-400 ml-1" x-text="'('+scanFiles.length+')'"></span>
+          <span x-show="st==='duplicates' && scanDuplicates.length" class="text-xs text-amber-400 ml-1" x-text="'('+dupGroups(scanDuplicates).length+' groups)'"></span>
+        </button>
+      </template>
+    </div>
+
+    <!-- ── FILES ── -->
+    <div x-show="scanTab==='files'">
+      <!-- Filters -->
+      <div class="flex flex-wrap gap-2 mb-3">
+        <input type="search" x-model="scanSearch" placeholder="Search filenames…"
+          class="bg-gray-700 rounded-lg px-3 py-2 text-sm border border-gray-600 focus:border-blue-500 outline-none w-full sm:w-56">
+        <label class="flex items-center gap-2 bg-gray-800 px-3 py-2 rounded-lg border border-gray-700 text-sm">
+          <span class="text-gray-400 text-xs">Max score</span>
+          <input type="number" x-model="scanMaxScore" min="0" max="100" step="1" placeholder="100"
+            class="bg-transparent w-14 outline-none text-right text-sm">
+        </label>
+        <label class="flex items-center gap-2 bg-gray-800 px-3 py-2 rounded-lg border border-gray-700 text-sm">
+          <span class="text-gray-400 text-xs">Codec</span>
+          <select x-model="scanCodec" class="bg-transparent outline-none text-sm">
+            <option value="">All</option>
+            <template x-for="c in scanCodecs" :key="c">
+              <option :value="c" x-text="c"></option>
+            </template>
+          </select>
+        </label>
+        <label class="flex items-center gap-2 bg-gray-800 px-3 py-2 rounded-lg border border-gray-700 text-sm cursor-pointer">
+          <input type="checkbox" x-model="scanNonEnglish">
+          <span class="text-gray-400 text-xs">Non-English streams</span>
+        </label>
+        <span class="flex items-center text-xs text-gray-500" x-text="filteredScanFiles.length + ' files'"></span>
+      </div>
+
+      <!-- Bulk strip bar -->
+      <div x-show="selectedScanCount > 0" x-cloak
+        class="flex items-center gap-3 mb-3 bg-blue-900/30 border border-blue-700/50 rounded-lg px-4 py-2 flex-wrap">
+        <span class="text-sm text-blue-300" x-text="selectedScanCount + ' selected'"></span>
+        <button @click="triggerStrip()" :disabled="stripping"
+          class="bg-purple-700 hover:bg-purple-600 disabled:opacity-40 px-3 py-1 rounded text-xs font-medium ml-auto">
+          <span x-text="stripping ? 'Stripping…' : 'Strip non-English streams'"></span>
+        </button>
+        <button @click="selectedScanFiles={}" class="text-gray-400 hover:text-white text-xs">Clear</button>
+      </div>
+
+      <div x-show="scanLoading && !scanFiles.length" class="text-center py-10 text-gray-500 text-sm">Loading scan data…</div>
+
+      <div x-show="!scanLoading || scanFiles.length" class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
+        <div class="overflow-x-auto scrollbar-none">
+          <table class="w-full text-sm min-w-[700px]">
+            <thead><tr class="border-b border-gray-700 text-gray-400 text-xs uppercase tracking-wide">
+              <th class="px-3 py-2 w-8">
+                <input type="checkbox" :checked="allScanSelected" @change="toggleAllScanFiles()">
+              </th>
+              <th class="text-left px-3 py-2">File</th>
+              <th class="text-left px-3 py-2 w-16">Res</th>
+              <th class="text-left px-3 py-2 w-16">Codec</th>
+              <th class="text-right px-3 py-2 w-16">Size</th>
+              <th class="text-right px-3 py-2 w-20">Score</th>
+              <th class="text-left px-3 py-2 w-20">Flags</th>
+              <th class="px-3 py-2 w-20"></th>
+            </tr></thead>
+            <tbody>
+              <template x-for="f in filteredScanFiles" :key="f.id">
+                <template>
+                  <tr class="border-b border-gray-700/50 hover:bg-gray-700/20 cursor-pointer"
+                    :class="selectedScanFiles[f.id]?'bg-blue-900/20':''"
+                    @click.self="expandedScanFile=expandedScanFile===f.id?null:f.id">
+                    <td class="px-3 py-2" @click.stop>
+                      <input type="checkbox" :checked="selectedScanFiles[f.id]"
+                        @change="selectedScanFiles={...selectedScanFiles,[f.id]:$event.target.checked}">
+                    </td>
+                    <td class="px-3 py-2 max-w-[260px]" @click="expandedScanFile=expandedScanFile===f.id?null:f.id">
+                      <div class="font-medium text-xs leading-tight truncate" x-text="f.filename" :title="f.path"></div>
+                      <div class="text-[10px] text-gray-500 truncate" x-text="f.hdr_type||''"></div>
+                    </td>
+                    <td class="px-3 py-2 text-xs text-gray-300" x-text="resolution(f)"></td>
+                    <td class="px-3 py-2 text-xs font-mono text-gray-300 uppercase" x-text="f.video_codec||'—'"></td>
+                    <td class="px-3 py-2 text-right text-xs tabular-nums text-gray-400"
+                      x-text="f.size_bytes ? (f.size_bytes/1073741824).toFixed(1)+' GB' : '—'"></td>
+                    <td class="px-3 py-2 text-right">
+                      <span class="text-sm font-bold tabular-nums" :class="scoreColor(f.quality_score)" x-text="f.quality_score??'—'"></span>
+                    </td>
+                    <td class="px-3 py-2 text-xs">
+                      <span x-show="f.non_english_audio>0" class="text-purple-400 mr-1" title="Non-English audio">🌐A</span>
+                      <span x-show="f.non_english_subs>0" class="text-purple-400" title="Non-English subtitles">🌐S</span>
+                      <span x-show="f.stripped_at" class="text-emerald-500" title="Streams stripped">✓</span>
+                    </td>
+                    <td class="px-3 py-2 text-right" @click.stop>
+                      <div class="flex justify-end gap-1">
+                        <button x-show="f.radarr_id||f.sonarr_id" @click="searchScanFile(f)"
+                          class="bg-blue-800 hover:bg-blue-700 px-2 py-1 rounded text-xs">↑</button>
+                        <button @click="deleteScanEntry(f)"
+                          class="bg-gray-700 hover:bg-red-800 px-2 py-1 rounded text-xs">✕</button>
+                      </div>
+                    </td>
+                  </tr>
+                  <!-- Expanded breakdown -->
+                  <tr x-show="expandedScanFile===f.id" class="bg-gray-900/60 border-b border-gray-700/30">
+                    <td colspan="8" class="px-5 py-4">
+                      <div class="grid sm:grid-cols-2 gap-4">
+                        <!-- Score breakdown bars -->
+                        <div>
+                          <div class="text-xs text-gray-400 font-semibold mb-2">Score Breakdown</div>
+                          <template x-for="[k, v] in breakdown(f)" :key="k">
+                            <div class="mb-2">
+                              <div class="flex justify-between text-xs text-gray-400 mb-0.5">
+                                <span class="capitalize" x-text="k.replace('_',' ')"></span>
+                                <span x-text="v"></span>
+                              </div>
+                              <div class="h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                                <div class="h-full rounded-full transition-all" :class="scoreBg(v)" :style="`width:${v}%`"></div>
+                              </div>
+                            </div>
+                          </template>
+                        </div>
+                        <!-- File details -->
+                        <div class="text-xs space-y-1 text-gray-400">
+                          <div><span class="text-gray-500">Path:</span> <span class="font-mono break-all" x-text="f.path"></span></div>
+                          <div><span class="text-gray-500">Duration:</span> <span x-text="f.duration_seconds ? Math.round(f.duration_seconds/60)+' min' : '—'"></span></div>
+                          <div><span class="text-gray-500">Video:</span> <span x-text="(f.video_codec||'').toUpperCase()+' '+resolution(f)+(f.hdr_type?' · '+f.hdr_type:'')"></span></div>
+                          <div><span class="text-gray-500">Audio:</span> <span x-text="(f.audio_codec||'').toUpperCase()+' '+f.audio_channels+'ch'"></span></div>
+                          <div><span class="text-gray-500">Audio langs:</span> <span x-text="f.audio_langs ? JSON.parse(f.audio_langs).join(', ')||'—' : '—'"></span></div>
+                          <div><span class="text-gray-500">Sub langs:</span> <span x-text="f.sub_langs ? JSON.parse(f.sub_langs).join(', ')||'—' : '—'"></span></div>
+                          <div><span class="text-gray-500">Hash:</span> <span class="font-mono" x-text="f.file_hash||'—'"></span></div>
+                          <div><span class="text-gray-500">Scanned:</span> <span x-text="fmt(f.scanned_at)"></span></div>
+                          <div x-show="f.stripped_at"><span class="text-gray-500">Stripped:</span> <span class="text-emerald-400" x-text="fmt(f.stripped_at)"></span></div>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                </template>
+              </template>
+              <tr x-show="!filteredScanFiles.length && !scanLoading">
+                <td colspan="8" class="px-4 py-10 text-center text-gray-500">
+                  <span x-show="!scanFiles.length">No scan data — click Scan Now to analyse your media files.</span>
+                  <span x-show="scanFiles.length && !filteredScanFiles.length">No files match the current filters.</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── DUPLICATES ── -->
+    <div x-show="scanTab==='duplicates'">
+      <div x-show="!scanDuplicates.length" class="text-center py-10 text-gray-500 text-sm">No duplicate files detected.</div>
+      <template x-for="(group, i) in dupGroups(scanDuplicates)" :key="i">
+        <div class="bg-gray-800 rounded-xl border border-gray-700 mb-3 overflow-hidden">
+          <div class="px-4 py-2 bg-gray-700/40 border-b border-gray-700 flex items-center gap-3">
+            <span class="text-xs text-amber-400 font-semibold">Duplicate group</span>
+            <span class="text-xs text-gray-400 font-mono" x-text="group[0].file_hash"></span>
+            <span class="text-xs text-gray-500" x-text="group.length + ' files'"></span>
+          </div>
+          <template x-for="f in group" :key="f.id">
+            <div class="px-4 py-3 border-b border-gray-700/30 last:border-0 flex items-center gap-3">
+              <div class="flex-1 min-w-0">
+                <div class="text-sm font-medium truncate" x-text="f.filename"></div>
+                <div class="text-xs text-gray-500 truncate font-mono" x-text="f.path"></div>
+              </div>
+              <span class="text-xs tabular-nums text-gray-400 shrink-0"
+                x-text="f.size_bytes ? (f.size_bytes/1073741824).toFixed(1)+' GB' : '—'"></span>
+              <span class="text-sm font-bold tabular-nums shrink-0" :class="scoreColor(f.quality_score)" x-text="f.quality_score??'—'"></span>
+            </div>
+          </template>
+        </div>
+      </template>
+    </div>
+
+    <!-- ── STATS ── -->
+    <div x-show="scanTab==='stats'">
+      <div x-show="!scanStats" class="text-center py-10 text-gray-500 text-sm">No stats yet — run a scan first.</div>
+      <div x-show="scanStats" class="space-y-4">
+        <!-- Top stat cards -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div class="bg-gray-800 rounded-xl p-4 border border-gray-700">
+            <div class="text-xs text-gray-400 mb-1">Total Files</div>
+            <div class="text-2xl font-bold text-blue-400" x-text="scanStats?.total_files??'—'"></div>
+          </div>
+          <div class="bg-gray-800 rounded-xl p-4 border border-gray-700">
+            <div class="text-xs text-gray-400 mb-1">Total Size</div>
+            <div class="text-2xl font-bold text-gray-200"
+              x-text="scanStats?.total_bytes ? (scanStats.total_bytes/1073741824).toFixed(1)+' GB' : '—'"></div>
+          </div>
+          <div class="bg-gray-800 rounded-xl p-4 border border-gray-700">
+            <div class="text-xs text-gray-400 mb-1">Avg Score</div>
+            <div class="text-2xl font-bold" :class="scoreColor(scanStats?.avg_score)"
+              x-text="scanStats?.avg_score ? Math.round(scanStats.avg_score) : '—'"></div>
+          </div>
+          <div class="bg-gray-800 rounded-xl p-4 border border-gray-700">
+            <div class="text-xs text-gray-400 mb-1">Duplicates</div>
+            <div class="text-2xl font-bold text-amber-400" x-text="scanStats?.duplicate_files??'—'"></div>
+          </div>
+        </div>
+        <!-- Quality distribution -->
+        <div class="grid sm:grid-cols-2 gap-4">
+          <div class="bg-gray-800 rounded-xl p-4 border border-gray-700">
+            <div class="text-sm font-medium mb-3">Quality Distribution</div>
+            <div class="space-y-2">
+              <div class="flex items-center gap-3 text-sm">
+                <span class="text-emerald-400 w-20 text-xs">High (≥75)</span>
+                <div class="flex-1 h-2 bg-gray-700 rounded-full overflow-hidden">
+                  <div class="h-full bg-emerald-500 rounded-full"
+                    :style="`width:${(scanStats?.high_quality||0)/(scanStats?.total_files||1)*100}%`"></div>
+                </div>
+                <span class="text-xs text-gray-400 w-8 text-right" x-text="scanStats?.high_quality??0"></span>
+              </div>
+              <div class="flex items-center gap-3 text-sm">
+                <span class="text-amber-400 w-20 text-xs">Mid (50–74)</span>
+                <div class="flex-1 h-2 bg-gray-700 rounded-full overflow-hidden">
+                  <div class="h-full bg-amber-500 rounded-full"
+                    :style="`width:${(scanStats?.mid_quality||0)/(scanStats?.total_files||1)*100}%`"></div>
+                </div>
+                <span class="text-xs text-gray-400 w-8 text-right" x-text="scanStats?.mid_quality??0"></span>
+              </div>
+              <div class="flex items-center gap-3 text-sm">
+                <span class="text-red-400 w-20 text-xs">Low (&lt;50)</span>
+                <div class="flex-1 h-2 bg-gray-700 rounded-full overflow-hidden">
+                  <div class="h-full bg-red-500 rounded-full"
+                    :style="`width:${(scanStats?.low_quality||0)/(scanStats?.total_files||1)*100}%`"></div>
+                </div>
+                <span class="text-xs text-gray-400 w-8 text-right" x-text="scanStats?.low_quality??0"></span>
+              </div>
+              <div class="flex items-center gap-3 text-sm">
+                <span class="text-purple-400 w-20 text-xs">Non-English</span>
+                <div class="flex-1 h-2 bg-gray-700 rounded-full overflow-hidden">
+                  <div class="h-full bg-purple-500 rounded-full"
+                    :style="`width:${(scanStats?.has_non_english||0)/(scanStats?.total_files||1)*100}%`"></div>
+                </div>
+                <span class="text-xs text-gray-400 w-8 text-right" x-text="scanStats?.has_non_english??0"></span>
+              </div>
+            </div>
+          </div>
+          <!-- By codec -->
+          <div class="bg-gray-800 rounded-xl p-4 border border-gray-700">
+            <div class="text-sm font-medium mb-3">By Codec</div>
+            <template x-for="c in (scanStats?.by_codec||[])" :key="c.video_codec">
+              <div class="mb-2">
+                <div class="flex justify-between text-xs text-gray-400 mb-0.5">
+                  <span class="uppercase font-mono" x-text="c.video_codec||'unknown'"></span>
+                  <span x-text="c.count + ' files · ' + (c.bytes/1073741824).toFixed(1) + ' GB'"></span>
+                </div>
+                <div class="h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                  <div class="h-full bg-blue-500 rounded-full"
+                    :style="`width:${Math.min(100,c.count/(scanStats?.total_files||1)*100)}%`"></div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- ═══════════════════════════════════ SCHEDULES ═══════════════════════════════════ -->
   <section x-show="activeTab==='schedules'" x-cloak>
     <div class="flex items-center justify-between mb-4">
@@ -655,6 +929,25 @@
                     </div>
                   </template>
 
+                  <!-- Scan / Strip: log lines -->
+                  <template x-if="selRun?.id===r.id && (r.type==='scan'||r.type==='strip')">
+                    <div>
+                      <template x-if="r.status==='success'">
+                        <div>
+                          <div class="text-xs font-semibold text-gray-400 mb-2 capitalize" x-text="r.type+' completed'"></div>
+                          <div class="text-xs text-gray-300 space-y-1 max-h-64 overflow-y-auto">
+                            <template x-for="(line, i) in (r.log||'').split('\n').filter(l=>l.trim())" :key="i">
+                              <div :class="line.startsWith('Error')?'text-red-300':line.startsWith('Skip')?'text-gray-500':line.startsWith('Stripped')||line.startsWith('Done')?'text-emerald-300':''" x-text="line"></div>
+                            </template>
+                          </div>
+                        </div>
+                      </template>
+                      <template x-if="r.status==='error'">
+                        <div class="text-xs text-red-300" x-text="r.log||'Unknown error'"></div>
+                      </template>
+                    </div>
+                  </template>
+
                   <!-- Analyze: summary stats -->
                   <template x-if="selRun?.id===r.id && r.type==='analyze'">
                     <div>
@@ -716,7 +1009,7 @@
 <script>
 function app() {
   return {
-    tabs: ['dashboard','library','analyze','upgrade','schedules','history','settings'],
+    tabs: ['dashboard','library','analyze','upgrade','scan','schedules','history','settings'],
     activeTab: 'dashboard',
     banner: '', bannerErr: false,
     runs: [], candidates: [], schedules: [], config: {},
@@ -727,6 +1020,12 @@ function app() {
     newSched: { job_type: 'analyze', cron: '0 3 * * *' },
     selRun: null,
     af: { gb: 0, days: 0, type: '' },
+
+    // Scanner
+    scanFiles: [], scanDuplicates: [], scanStats: null,
+    scanTab: 'files', scanLoading: false, scanning: false, stripping: false,
+    scanSearch: '', scanMaxScore: '', scanCodec: '', scanNonEnglish: false,
+    selectedScanFiles: {}, expandedScanFile: null,
 
     // Library
     libraryTab: 'movies',
@@ -760,10 +1059,12 @@ function app() {
         {value:'gotify',  label:'Gotify'},
         {value:'generic', label:'Generic JSON'},
       ]},
+      {key:'media_paths',       label:'Media Paths (Scanner)',             type:'text',
+       hint:'Comma-separated absolute paths to scan for video files, e.g. /movies,/tv — must match volume mounts in docker-compose.yml'},
     ],
 
     tabIcon(t) {
-      return {dashboard:'⊞',library:'🎬',analyze:'🔍',upgrade:'⬆',schedules:'🕐',history:'📋',settings:'⚙'}[t]||'●';
+      return {dashboard:'⊞',library:'🎬',analyze:'🔍',upgrade:'⬆',scan:'🎞',schedules:'🕐',history:'📋',settings:'⚙'}[t]||'●';
     },
 
     // ── Computed ──────────────────────────────────────────────────────────────
@@ -818,6 +1119,26 @@ function app() {
       return {stats,triggered,dryRun,unmatched,errors};
     },
 
+    // Scan computed
+    get filteredScanFiles() {
+      const q = this.scanSearch.toLowerCase();
+      const maxS = parseFloat(this.scanMaxScore);
+      return this.scanFiles.filter(f =>
+        (!q || f.filename.toLowerCase().includes(q)) &&
+        (isNaN(maxS) || f.quality_score <= maxS) &&
+        (!this.scanCodec || f.video_codec === this.scanCodec) &&
+        (!this.scanNonEnglish || f.non_english_audio > 0 || f.non_english_subs > 0)
+      );
+    },
+    get selectedScanCount() { return Object.values(this.selectedScanFiles).filter(Boolean).length; },
+    get allScanSelected() {
+      return this.filteredScanFiles.length > 0 && this.filteredScanFiles.every(f => this.selectedScanFiles[f.id]);
+    },
+    get scanCodecs() {
+      const s = new Set(this.scanFiles.map(f => f.video_codec).filter(Boolean));
+      return [...s].sort();
+    },
+
     // ── Init ──────────────────────────────────────────────────────────────────
     async init() {
       await Promise.all([this.loadRuns(),this.loadCandidates(),this.loadSchedules(),this.loadConfig()]);
@@ -829,6 +1150,7 @@ function app() {
       this.activeTab = t;
       if (t==='library' && !this.movies.length && !this.series.length) this.loadLibrary();
       if (t==='dashboard' && !this.stats) this.loadStats();
+      if (t==='scan' && !this.scanFiles.length && !this.scanLoading) this.loadScanFiles();
     },
     setLibraryTab(t) {
       this.libraryTab = t;
@@ -1027,6 +1349,110 @@ function app() {
     async saveConfig() {
       try{await this.req('POST','/api/config',this.config);this.flash('Settings saved');}
       catch(e){this.flash('Error: '+e.message,true);}
+    },
+
+    // ── Scanner ───────────────────────────────────────────────────────────────
+    async loadScanFiles() {
+      this.scanLoading = true;
+      try { this.scanFiles = await this.req('GET','/api/scan/files'); }
+      catch(e) { this.flash('Scan files: '+e.message,true); }
+      this.scanLoading = false;
+    },
+    async loadScanDuplicates() {
+      try { this.scanDuplicates = await this.req('GET','/api/scan/duplicates'); }
+      catch(e) { this.flash('Duplicates: '+e.message,true); }
+    },
+    async loadScanStats() {
+      try { this.scanStats = await this.req('GET','/api/scan/stats'); }
+      catch(e) { /* silent */ }
+    },
+    async setScanTab(t) {
+      this.scanTab = t;
+      if (t==='duplicates' && !this.scanDuplicates.length) this.loadScanDuplicates();
+      if (t==='stats') this.loadScanStats();
+    },
+    async triggerScan() {
+      this.scanning = true;
+      try {
+        await this.req('POST','/api/runs/scan',{});
+        this.flash('File scan started');
+        const poll = setInterval(async()=>{
+          await this.loadRuns();
+          const r = this.runs.find(x=>x.type==='scan');
+          if (r && r.status !== 'running') {
+            clearInterval(poll); this.scanning = false;
+            await this.loadScanFiles();
+            this.loadScanStats();
+            this.flash(r.status==='success'?'Scan complete':'Scan failed', r.status!=='success');
+          }
+        },3000);
+      } catch(e) { this.flash('Error: '+e.message,true); this.scanning=false; }
+    },
+    async triggerStrip() {
+      const ids = Object.entries(this.selectedScanFiles).filter(([,v])=>v).map(([k])=>+k);
+      if (!ids.length) { this.flash('Select files to strip',true); return; }
+      if (!confirm(`Strip non-English audio/subs from ${ids.length} file(s)?\n\nThis overwrites the original files. Make sure you have backups.`)) return;
+      this.stripping = true;
+      try {
+        await this.req('POST','/api/runs/strip',{file_ids:ids});
+        this.flash(`Stripping ${ids.length} file(s)…`);
+        this.selectedScanFiles = {};
+        const poll = setInterval(async()=>{
+          await this.loadRuns();
+          const r = this.runs.find(x=>x.type==='strip');
+          if (r && r.status !== 'running') {
+            clearInterval(poll); this.stripping = false;
+            await this.loadScanFiles();
+            this.flash(r.status==='success'?'Strip complete':'Strip failed', r.status!=='success');
+          }
+        },3000);
+      } catch(e) { this.flash('Error: '+e.message,true); this.stripping=false; }
+    },
+    async searchScanFile(f) {
+      try { await this.req('POST',`/api/scan/files/${f.id}/search`); this.flash(`Search triggered: ${f.filename}`); }
+      catch(e) { this.flash('Search failed: '+e.message,true); }
+    },
+    async deleteScanEntry(f) {
+      try {
+        await this.req('DELETE',`/api/scan/files/${f.id}`);
+        this.scanFiles = this.scanFiles.filter(x=>x.id!==f.id);
+        delete this.selectedScanFiles[f.id];
+        this.flash(`Removed from scan: ${f.filename}`);
+      } catch(e) { this.flash('Error: '+e.message,true); }
+    },
+    toggleAllScanFiles() {
+      this.selectedScanFiles = this.allScanSelected ? {} :
+        Object.fromEntries(this.filteredScanFiles.map(f=>[f.id,true]));
+    },
+    scoreColor(s) {
+      if (s >= 75) return 'text-emerald-400';
+      if (s >= 50) return 'text-amber-400';
+      return 'text-red-400';
+    },
+    scoreBg(s) {
+      if (s >= 75) return 'bg-emerald-500';
+      if (s >= 50) return 'bg-amber-500';
+      return 'bg-red-500';
+    },
+    resolution(f) {
+      if (!f.width || !f.height) return '—';
+      if (f.width >= 3840) return '4K';
+      if (f.width >= 1920) return '1080p';
+      if (f.width >= 1280) return '720p';
+      if (f.width >= 854)  return '480p';
+      return f.width+'×'+f.height;
+    },
+    breakdown(f) {
+      try { return Object.entries(JSON.parse(f.score_breakdown||'{}')); }
+      catch { return []; }
+    },
+    dupGroups(dups) {
+      const groups = {};
+      for (const f of dups) {
+        if (!groups[f.file_hash]) groups[f.file_hash] = [];
+        groups[f.file_hash].push(f);
+      }
+      return Object.values(groups);
     },
 
     // ── Formatters ─────────────────────────────────────────────────────────────
