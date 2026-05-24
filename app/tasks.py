@@ -2,6 +2,8 @@ import csv
 import io
 import json
 import logging
+import os
+import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,6 +11,7 @@ from pathlib import Path
 from app.clients import RadarrClient, SonarrClient, PlexClient
 from app.config import settings
 from app.db import db
+from app import scanner as sc
 
 log = logging.getLogger(__name__)
 NEVER = 99999
@@ -50,6 +53,7 @@ def _effective_config(overrides: dict = None) -> dict:
         "min_days_stale": settings.min_days_stale,
         "webhook_url": settings.webhook_url,
         "webhook_type": settings.webhook_type,
+        "media_paths": settings.media_paths,
     }
     for row in rows:
         cfg[row["key"]] = row["value"]
@@ -353,3 +357,212 @@ def _safe_float(v: str, default: float = 999.0) -> float:
         return float(v)
     except (TypeError, ValueError):
         return default
+
+
+# ---------------------------------------------------------------------------
+# Scan
+# ---------------------------------------------------------------------------
+
+def run_scan(params: dict = None):
+    if params is None:
+        params = _effective_config()
+    run_id = _start_run("scan", params)
+    logs = []
+    try:
+        raw_paths = str(params.get("media_paths") or "").strip()
+        if not raw_paths:
+            _finish_run(run_id, "error", {}, "MEDIA_PATHS not configured — set it in Settings or as an environment variable.")
+            return run_id
+
+        media_paths = [p.strip() for p in raw_paths.split(",") if p.strip()]
+        logs.append(f"Scanning {len(media_paths)} path(s): {', '.join(media_paths)}")
+
+        files = sc.walk_media_paths(media_paths)
+        logs.append(f"Found {len(files)} video file(s)")
+
+        radarr_lib = {}
+        sonarr_lib = {}
+        if params.get("radarr_api_key"):
+            try:
+                movies = RadarrClient(str(params["radarr_url"]), str(params["radarr_api_key"])).movies()
+                for m in movies:
+                    mf = m.get("movieFile") or {}
+                    stem = Path(mf.get("relativePath", "")).stem.lower()
+                    if stem:
+                        radarr_lib[stem] = m["id"]
+            except Exception as e:
+                logs.append(f"Radarr lookup unavailable: {e}")
+        if params.get("sonarr_api_key"):
+            try:
+                series = SonarrClient(str(params["sonarr_url"]), str(params["sonarr_api_key"])).series()
+                sonarr_lib = {s["title"].lower(): s["id"] for s in series}
+            except Exception as e:
+                logs.append(f"Sonarr lookup unavailable: {e}")
+
+        scanned = skipped = errors = 0
+        now = _now()
+
+        for path in files:
+            try:
+                stat = os.stat(path)
+                size_bytes = stat.st_size
+                mtime = stat.st_mtime
+                filename = os.path.basename(path)
+
+                with db() as conn:
+                    existing = conn.execute(
+                        "SELECT id, mtime FROM scan_files WHERE path=?", (path,)
+                    ).fetchone()
+                    if existing and existing["mtime"] == mtime:
+                        skipped += 1
+                        continue
+
+                info = sc.scan_file(path)
+                if info is None:
+                    logs.append(f"Skip (no video stream): {filename}")
+                    errors += 1
+                    continue
+
+                stem = Path(filename).stem.lower()
+                radarr_id = radarr_lib.get(stem)
+                sonarr_id = None
+                if not radarr_id:
+                    for title, sid in sonarr_lib.items():
+                        if title in path.lower():
+                            sonarr_id = sid
+                            break
+
+                with db() as conn:
+                    conn.execute("""
+                        INSERT INTO scan_files
+                          (path, filename, size_bytes, mtime, file_hash,
+                           duration_seconds, video_codec, width, height, video_bitrate_kbps,
+                           hdr_type, audio_codec, audio_channels,
+                           non_english_audio, non_english_subs, audio_langs, sub_langs,
+                           quality_score, score_breakdown, scanned_at, radarr_id, sonarr_id)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        ON CONFLICT(path) DO UPDATE SET
+                          filename=excluded.filename, size_bytes=excluded.size_bytes,
+                          mtime=excluded.mtime, file_hash=excluded.file_hash,
+                          duration_seconds=excluded.duration_seconds,
+                          video_codec=excluded.video_codec, width=excluded.width, height=excluded.height,
+                          video_bitrate_kbps=excluded.video_bitrate_kbps, hdr_type=excluded.hdr_type,
+                          audio_codec=excluded.audio_codec, audio_channels=excluded.audio_channels,
+                          non_english_audio=excluded.non_english_audio,
+                          non_english_subs=excluded.non_english_subs,
+                          audio_langs=excluded.audio_langs, sub_langs=excluded.sub_langs,
+                          quality_score=excluded.quality_score, score_breakdown=excluded.score_breakdown,
+                          scanned_at=excluded.scanned_at,
+                          radarr_id=excluded.radarr_id, sonarr_id=excluded.sonarr_id
+                    """, (
+                        path, filename, size_bytes, mtime, info["file_hash"],
+                        info["duration_seconds"], info["video_codec"], info["width"], info["height"],
+                        info["video_bitrate_kbps"], info["hdr_type"], info["audio_codec"],
+                        info["audio_channels"], info["non_english_audio"], info["non_english_subs"],
+                        info["audio_langs"], info["sub_langs"],
+                        info["quality_score"], info["score_breakdown"], now,
+                        radarr_id, sonarr_id,
+                    ))
+                scanned += 1
+            except Exception as e:
+                log.warning("Error scanning %s: %s", path, e)
+                logs.append(f"Error: {os.path.basename(path)}: {e}")
+                errors += 1
+
+        summary = {"total": len(files), "scanned": scanned, "skipped": skipped, "errors": errors}
+        logs.append(f"Done — scanned {scanned}, skipped {skipped} (unchanged), errors {errors}")
+        _finish_run(run_id, "success", summary, "\n".join(logs))
+        _notify(params, "Media Manager — Scan complete",
+                f"Scanned {scanned} files, {skipped} unchanged, {errors} errors.")
+    except Exception as exc:
+        log.exception("Scan task failed")
+        _finish_run(run_id, "error", {}, str(exc))
+        _notify(params, "Media Manager — Scan failed", str(exc))
+    return run_id
+
+
+# ---------------------------------------------------------------------------
+# Strip non-English streams
+# ---------------------------------------------------------------------------
+
+def run_strip(file_ids: list, params: dict = None):
+    if params is None:
+        params = _effective_config()
+    run_id = _start_run("strip", params)
+    logs = []
+    try:
+        if not file_ids:
+            _finish_run(run_id, "success", {"stripped": 0}, "No files selected.")
+            return run_id
+
+        with db() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM scan_files WHERE id IN ({','.join('?' for _ in file_ids)})",
+                file_ids
+            ).fetchall()
+
+        logs.append(f"Stripping non-English streams from {len(rows)} file(s)")
+        stripped = skipped = errors = 0
+
+        for row in rows:
+            row = dict(row)
+            path = row["path"]
+            filename = row["filename"]
+            if not os.path.isfile(path):
+                logs.append(f"Missing: {filename}")
+                errors += 1
+                continue
+
+            probe = sc.probe_file(path)
+            if not probe:
+                logs.append(f"Cannot probe: {filename}")
+                errors += 1
+                continue
+
+            cmd = sc.build_strip_command(path, probe)
+            if cmd is None:
+                logs.append(f"Nothing to strip: {filename}")
+                skipped += 1
+                continue
+
+            tmp = path + '.stripping.mkv'
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+                if result.returncode != 0:
+                    logs.append(f"ffmpeg error {filename}: {result.stderr[-200:]}")
+                    errors += 1
+                    if os.path.exists(tmp):
+                        os.remove(tmp)
+                    continue
+
+                os.replace(tmp, path)
+                now = _now()
+                with db() as conn:
+                    conn.execute(
+                        "UPDATE scan_files SET stripped_at=?, non_english_audio=0, non_english_subs=0 WHERE id=?",
+                        (now, row["id"])
+                    )
+                stripped += 1
+                logs.append(f"Stripped: {filename}")
+            except subprocess.TimeoutExpired:
+                logs.append(f"Timeout: {filename}")
+                errors += 1
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            except Exception as e:
+                logs.append(f"Error {filename}: {e}")
+                errors += 1
+                if os.path.exists(tmp):
+                    try: os.remove(tmp)
+                    except: pass
+
+        summary = {"stripped": stripped, "skipped": skipped, "errors": errors}
+        logs.append(f"Done — stripped {stripped}, skipped {skipped} (already clean), errors {errors}")
+        _finish_run(run_id, "success", summary, "\n".join(logs))
+        _notify(params, "Media Manager — Strip complete",
+                f"Stripped {stripped} files, {skipped} already clean, {errors} errors.")
+    except Exception as exc:
+        log.exception("Strip task failed")
+        _finish_run(run_id, "error", {}, str(exc))
+        _notify(params, "Media Manager — Strip failed", str(exc))
+    return run_id
