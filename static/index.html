@@ -403,9 +403,111 @@
                 <td class="px-4 py-2"><span class="px-2 py-0.5 rounded-full text-xs" :class="statusCls(r.status)" x-text="r.status"></span></td>
                 <td class="px-4 py-2 text-gray-400 text-xs" x-text="sumText(r.summary)"></td>
               </tr>
-              <tr x-show="selRun?.id===r.id" class="bg-gray-900">
-                <td colspan="6" class="px-4 py-3">
-                  <pre class="text-xs text-gray-300 whitespace-pre-wrap max-h-56 overflow-y-auto" x-text="r.log || '(no log output)'"></pre>
+              <tr x-show="selRun?.id===r.id" class="bg-gray-900/80 border-b border-gray-700/50">
+                <td colspan="6" class="px-5 py-4">
+
+                  <!-- UPGRADE: parsed sections -->
+                  <template x-if="selRun?.id===r.id && r.type==='upgrade'">
+                    <div class="space-y-4">
+
+                      <!-- Diagnostic stats (parsed, threshold, split counts) -->
+                      <template x-if="parsedSelRun && parsedSelRun.stats.length">
+                        <div class="text-xs text-gray-500 space-y-0.5 pb-2 border-b border-gray-800">
+                          <template x-for="s in parsedSelRun.stats" :key="s">
+                            <div x-text="s"></div>
+                          </template>
+                        </div>
+                      </template>
+
+                      <!-- Matched / triggered -->
+                      <template x-if="parsedSelRun && (parsedSelRun.triggered.length || parsedSelRun.dryRun.length)">
+                        <div>
+                          <div class="flex items-center gap-2 mb-2">
+                            <span class="text-xs font-semibold text-emerald-400">Matched</span>
+                            <span class="bg-emerald-900/60 text-emerald-300 text-xs px-1.5 py-0.5 rounded-full font-medium"
+                              x-text="parsedSelRun.triggered.length || parsedSelRun.dryRun.length"></span>
+                            <span x-show="parsedSelRun.dryRun.length && !parsedSelRun.triggered.length"
+                              class="text-xs text-gray-500 italic">dry run — no commands sent</span>
+                          </div>
+                          <div class="space-y-1 max-h-52 overflow-y-auto">
+                            <template x-for="item in (parsedSelRun.triggered.length ? parsedSelRun.triggered : parsedSelRun.dryRun)" :key="item">
+                              <div class="flex items-baseline gap-2 text-xs">
+                                <span class="text-emerald-500 shrink-0">✓</span>
+                                <span class="text-gray-200" x-text="item"></span>
+                              </div>
+                            </template>
+                          </div>
+                        </div>
+                      </template>
+
+                      <!-- Unmatched -->
+                      <template x-if="parsedSelRun && parsedSelRun.unmatched.length">
+                        <div>
+                          <div class="flex items-center gap-2 mb-2">
+                            <span class="text-xs font-semibold text-amber-400">Unmatched</span>
+                            <span class="bg-amber-900/60 text-amber-300 text-xs px-1.5 py-0.5 rounded-full font-medium"
+                              x-text="parsedSelRun.unmatched.length"></span>
+                            <span class="text-xs text-gray-500">not found in Radarr / Sonarr</span>
+                          </div>
+                          <div class="space-y-1 max-h-52 overflow-y-auto">
+                            <template x-for="item in parsedSelRun.unmatched" :key="item">
+                              <div class="flex items-baseline gap-2 text-xs">
+                                <span class="text-amber-700 shrink-0">—</span>
+                                <span class="text-gray-400" x-text="item"></span>
+                              </div>
+                            </template>
+                          </div>
+                        </div>
+                      </template>
+
+                      <!-- Errors -->
+                      <template x-if="parsedSelRun && parsedSelRun.errors.length">
+                        <div>
+                          <div class="flex items-center gap-2 mb-2">
+                            <span class="text-xs font-semibold text-red-400">Errors</span>
+                            <span class="bg-red-900/60 text-red-300 text-xs px-1.5 py-0.5 rounded-full font-medium"
+                              x-text="parsedSelRun.errors.length"></span>
+                          </div>
+                          <div class="space-y-1 max-h-28 overflow-y-auto">
+                            <template x-for="item in parsedSelRun.errors" :key="item">
+                              <div class="flex items-baseline gap-2 text-xs">
+                                <span class="text-red-500 shrink-0">✕</span>
+                                <span class="text-red-300" x-text="item"></span>
+                              </div>
+                            </template>
+                          </div>
+                        </div>
+                      </template>
+
+                      <!-- Nothing parsed (old run / no log) -->
+                      <template x-if="!parsedSelRun">
+                        <div class="text-xs text-gray-500">No log output recorded for this run.</div>
+                      </template>
+
+                    </div>
+                  </template>
+
+                  <!-- ANALYZE: summary stats -->
+                  <template x-if="selRun?.id===r.id && r.type==='analyze'">
+                    <div>
+                      <template x-if="r.status==='success'">
+                        <div class="flex gap-8">
+                          <div>
+                            <div class="text-xs text-gray-400 mb-1">Items scanned</div>
+                            <div class="text-2xl font-bold text-gray-200" x-text="analyzeSummary(r).scanned"></div>
+                          </div>
+                          <div>
+                            <div class="text-xs text-gray-400 mb-1">Candidates found</div>
+                            <div class="text-2xl font-bold text-blue-400" x-text="analyzeSummary(r).candidates"></div>
+                          </div>
+                        </div>
+                      </template>
+                      <template x-if="r.status==='error'">
+                        <div class="text-xs text-red-300" x-text="r.log || 'Unknown error'"></div>
+                      </template>
+                    </div>
+                  </template>
+
                 </td>
               </tr>
             </template>
@@ -615,6 +717,26 @@ function app() {
     async saveConfig() {
       try { await this.req('POST','/api/config',this.config); this.flash('Settings saved'); }
       catch(e) { this.flash('Error: '+e.message,true); }
+    },
+    get parsedSelRun() {
+      if (!this.selRun?.log) return null;
+      const lines = this.selRun.log.split('\n').filter(l => l.trim());
+      if (!lines.length) return null;
+      const stats = [], triggered = [], dryRun = [], unmatched = [], errors = [];
+      for (const line of lines) {
+        if (line.startsWith('Triggered: '))      triggered.push(line.slice(11));
+        else if (line.startsWith('[DRY-RUN] '))   dryRun.push(line.slice(10));
+        else if (line.startsWith('No match: '))   unmatched.push(line.slice(10));
+        else if (/^Error /.test(line))            errors.push(line.slice(6));
+        else                                      stats.push(line);
+      }
+      return { stats, triggered, dryRun, unmatched, errors };
+    },
+    analyzeSummary(r) {
+      try {
+        const o = typeof r.summary === 'string' ? JSON.parse(r.summary) : (r.summary || {});
+        return { scanned: o.scanned ?? '—', candidates: o.candidates ?? '—' };
+      } catch { return { scanned: '—', candidates: '—' }; }
     },
     fmt(iso) { return iso ? new Date(iso).toLocaleString() : ''; },
     dur(r) {
