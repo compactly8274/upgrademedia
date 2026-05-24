@@ -359,7 +359,7 @@ def list_schedules():
 
 @app.post("/api/schedules")
 def create_schedule(body: dict):
-    if body.get("job_type") not in ("analyze", "upgrade") or not body.get("cron"):
+    if body.get("job_type") not in ("analyze", "upgrade", "scan") or not body.get("cron"):
         raise HTTPException(400, "job_type and cron required")
     with db() as conn:
         cur = conn.execute(

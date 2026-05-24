@@ -361,6 +361,37 @@ def _safe_float(v: str, default: float = 999.0) -> float:
         return default
 
 
+_SCAN_INSERT_SQL = """
+    INSERT INTO scan_files
+      (path, filename, size_bytes, mtime, file_hash,
+       duration_seconds, video_codec, width, height, video_bitrate_kbps,
+       hdr_type, audio_codec, audio_channels,
+       non_english_audio, non_english_subs, audio_langs, sub_langs,
+       quality_score, score_breakdown, scanned_at, radarr_id, sonarr_id)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(path) DO UPDATE SET
+      filename=excluded.filename, size_bytes=excluded.size_bytes,
+      mtime=excluded.mtime, file_hash=excluded.file_hash,
+      duration_seconds=excluded.duration_seconds,
+      video_codec=excluded.video_codec, width=excluded.width, height=excluded.height,
+      video_bitrate_kbps=excluded.video_bitrate_kbps, hdr_type=excluded.hdr_type,
+      audio_codec=excluded.audio_codec, audio_channels=excluded.audio_channels,
+      non_english_audio=excluded.non_english_audio,
+      non_english_subs=excluded.non_english_subs,
+      audio_langs=excluded.audio_langs, sub_langs=excluded.sub_langs,
+      quality_score=excluded.quality_score, score_breakdown=excluded.score_breakdown,
+      scanned_at=excluded.scanned_at,
+      radarr_id=excluded.radarr_id, sonarr_id=excluded.sonarr_id
+"""
+SCAN_BATCH = 5  # flush to DB and update progress every N scanned files
+
+
+def _scan_progress(run_id: int, summary: dict, logs: list):
+    with db() as conn:
+        conn.execute("UPDATE runs SET summary=?, log=? WHERE id=?",
+                     (json.dumps(summary), "\n".join(logs), run_id))
+
+
 # ---------------------------------------------------------------------------
 # Scan
 # ---------------------------------------------------------------------------
@@ -381,6 +412,9 @@ def run_scan(params: dict = None):
 
         files = sc.walk_media_paths(media_paths)
         logs.append(f"Found {len(files)} video file(s)")
+
+        # Publish initial state so the UI shows total count before any files arrive
+        _scan_progress(run_id, {"total": len(files), "scanned": 0, "skipped": 0, "errors": 0, "done": 0}, logs)
 
         radarr_lib = {}
         sonarr_lib = {}
@@ -403,8 +437,9 @@ def run_scan(params: dict = None):
 
         scanned = skipped = errors = 0
         now = _now()
+        batch = []
 
-        for path in files:
+        for idx, path in enumerate(files):
             try:
                 stat = os.stat(path)
                 size_bytes = stat.st_size
@@ -415,61 +450,49 @@ def run_scan(params: dict = None):
                     existing = conn.execute(
                         "SELECT id, mtime FROM scan_files WHERE path=?", (path,)
                     ).fetchone()
-                    if existing and existing["mtime"] == mtime:
-                        skipped += 1
-                        continue
 
-                info = sc.scan_file(path)
-                if info is None:
-                    logs.append(f"Skip (no video stream): {filename}")
-                    errors += 1
-                    continue
+                if existing and existing["mtime"] == mtime:
+                    skipped += 1
+                else:
+                    info = sc.scan_file(path)
+                    if info is None:
+                        errors += 1
+                    else:
+                        stem = Path(filename).stem.lower()
+                        radarr_id = radarr_lib.get(stem)
+                        sonarr_id = None
+                        if not radarr_id:
+                            for title, sid in sonarr_lib.items():
+                                if title in path.lower():
+                                    sonarr_id = sid
+                                    break
+                        batch.append((
+                            path, filename, size_bytes, mtime, info["file_hash"],
+                            info["duration_seconds"], info["video_codec"], info["width"], info["height"],
+                            info["video_bitrate_kbps"], info["hdr_type"], info["audio_codec"],
+                            info["audio_channels"], info["non_english_audio"], info["non_english_subs"],
+                            info["audio_langs"], info["sub_langs"],
+                            info["quality_score"], info["score_breakdown"], now,
+                            radarr_id, sonarr_id,
+                        ))
+                        scanned += 1
 
-                stem = Path(filename).stem.lower()
-                radarr_id = radarr_lib.get(stem)
-                sonarr_id = None
-                if not radarr_id:
-                    for title, sid in sonarr_lib.items():
-                        if title in path.lower():
-                            sonarr_id = sid
-                            break
-
-                with db() as conn:
-                    conn.execute("""
-                        INSERT INTO scan_files
-                          (path, filename, size_bytes, mtime, file_hash,
-                           duration_seconds, video_codec, width, height, video_bitrate_kbps,
-                           hdr_type, audio_codec, audio_channels,
-                           non_english_audio, non_english_subs, audio_langs, sub_langs,
-                           quality_score, score_breakdown, scanned_at, radarr_id, sonarr_id)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                        ON CONFLICT(path) DO UPDATE SET
-                          filename=excluded.filename, size_bytes=excluded.size_bytes,
-                          mtime=excluded.mtime, file_hash=excluded.file_hash,
-                          duration_seconds=excluded.duration_seconds,
-                          video_codec=excluded.video_codec, width=excluded.width, height=excluded.height,
-                          video_bitrate_kbps=excluded.video_bitrate_kbps, hdr_type=excluded.hdr_type,
-                          audio_codec=excluded.audio_codec, audio_channels=excluded.audio_channels,
-                          non_english_audio=excluded.non_english_audio,
-                          non_english_subs=excluded.non_english_subs,
-                          audio_langs=excluded.audio_langs, sub_langs=excluded.sub_langs,
-                          quality_score=excluded.quality_score, score_breakdown=excluded.score_breakdown,
-                          scanned_at=excluded.scanned_at,
-                          radarr_id=excluded.radarr_id, sonarr_id=excluded.sonarr_id
-                    """, (
-                        path, filename, size_bytes, mtime, info["file_hash"],
-                        info["duration_seconds"], info["video_codec"], info["width"], info["height"],
-                        info["video_bitrate_kbps"], info["hdr_type"], info["audio_codec"],
-                        info["audio_channels"], info["non_english_audio"], info["non_english_subs"],
-                        info["audio_langs"], info["sub_langs"],
-                        info["quality_score"], info["score_breakdown"], now,
-                        radarr_id, sonarr_id,
-                    ))
-                scanned += 1
             except Exception as e:
                 log.warning("Error scanning %s: %s", path, e)
                 logs.append(f"Error: {os.path.basename(path)}: {e}")
                 errors += 1
+
+            # Flush batch to DB and push a progress update
+            last = idx == len(files) - 1
+            if len(batch) >= SCAN_BATCH or (last and batch):
+                with db() as conn:
+                    for row in batch:
+                        conn.execute(_SCAN_INSERT_SQL, row)
+                batch = []
+                _scan_progress(run_id, {
+                    "total": len(files), "scanned": scanned,
+                    "skipped": skipped, "errors": errors, "done": idx + 1,
+                }, logs)
 
         summary = {"total": len(files), "scanned": scanned, "skipped": skipped, "errors": errors}
         logs.append(f"Done — scanned {scanned}, skipped {skipped} (unchanged), errors {errors}")
