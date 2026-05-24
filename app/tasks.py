@@ -8,6 +8,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import requests
+
 from app.clients import RadarrClient, SonarrClient, PlexClient
 from app.config import settings
 from app.db import db
