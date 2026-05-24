@@ -202,7 +202,7 @@ def run_upgrade(params: dict = None, csv_text: str = ""):
         # Strip Medialyze comment lines (lines starting with #) before CSV parsing
         csv_lines = [l for l in csv_text.splitlines() if not l.lstrip().startswith("#")]
         reader = csv.DictReader(io.StringIO("\n".join(csv_lines)))
-        all_rows = [{k.strip().lower(): (v or "").strip() for k, v in row.items()} for row in reader]
+        all_rows = [{k.strip().lower(): (v or "").strip() for k, v in row.items() if k is not None} for row in reader]
 
         # Real Medialyze CSV uses quality_score column; fall back to score for compatibility
         def _row_score(r):

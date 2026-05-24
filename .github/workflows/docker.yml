@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - claude/medialyze-quality-filter-lfe2u
   workflow_dispatch:
 
 jobs:
