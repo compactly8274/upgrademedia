@@ -10,6 +10,7 @@
     [x-cloak]{display:none!important}
     .scrollbar-none::-webkit-scrollbar{display:none}
     .scrollbar-none{-ms-overflow-style:none;scrollbar-width:none}
+    input[type=checkbox]{accent-color:#3b82f6;width:15px;height:15px;cursor:pointer}
   </style>
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen pb-16 sm:pb-0" x-data="app()" x-init="init()">
@@ -36,7 +37,7 @@
 <!-- Mobile bottom tab bar -->
 <nav class="fixed bottom-0 left-0 right-0 bg-gray-800 border-t border-gray-700 flex sm:hidden z-20">
   <template x-for="t in tabs" :key="t">
-    <button @click="setTab(t)" class="flex-1 flex flex-col items-center gap-0.5 py-2 px-1 text-center transition-colors"
+    <button @click="setTab(t)" class="flex-1 flex flex-col items-center gap-0.5 py-2 px-1 transition-colors"
       :class="activeTab===t ? 'text-blue-400' : 'text-gray-500'">
       <span class="text-lg leading-none" x-text="tabIcon(t)"></span>
       <span class="text-[10px] leading-tight capitalize truncate w-full text-center" x-text="t"></span>
@@ -50,9 +51,11 @@
 
 <main class="p-4 sm:p-6 max-w-7xl mx-auto">
 
-  <!-- DASHBOARD -->
+  <!-- ═══════════════════════════════════ DASHBOARD ═══════════════════════════════════ -->
   <section x-show="activeTab==='dashboard'" x-cloak>
-    <div class="grid grid-cols-3 gap-3 mb-5">
+
+    <!-- Top stat cards -->
+    <div class="grid grid-cols-3 gap-3 mb-4">
       <div class="bg-gray-800 rounded-xl p-3 sm:p-5 border border-gray-700">
         <div class="text-[10px] sm:text-xs text-gray-400 uppercase tracking-wide mb-1">Candidates</div>
         <div class="text-2xl sm:text-3xl font-bold text-blue-400" x-text="candidates.length"></div>
@@ -66,6 +69,76 @@
         <div class="text-2xl sm:text-3xl font-bold text-purple-400" x-text="runs.length"></div>
       </div>
     </div>
+
+    <!-- Library & disk stats -->
+    <div x-show="stats" x-cloak class="grid sm:grid-cols-2 gap-4 mb-4">
+
+      <!-- Movies quality breakdown -->
+      <div class="bg-gray-800 rounded-xl p-4 border border-gray-700">
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-sm font-medium">Movies</span>
+          <span class="text-xs text-gray-400" x-text="(stats?.movies?.count||0) + ' files · ' + (stats?.movies?.size_gb||0) + ' GB'"></span>
+        </div>
+        <template x-if="stats?.movies?.by_quality">
+          <div>
+            <template x-for="[q, gb] in qualityEntries(stats.movies.by_quality)" :key="q">
+              <div class="mb-2">
+                <div class="flex justify-between text-xs text-gray-400 mb-0.5">
+                  <span x-text="q"></span><span x-text="gb + ' GB'"></span>
+                </div>
+                <div class="h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                  <div class="h-full bg-blue-500 rounded-full transition-all"
+                    :style="`width:${Math.min(100,gb/(stats.movies.size_gb||1)*100)}%`"></div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
+        <div x-show="stats?.movies?.missing" class="mt-2 text-xs text-amber-400"
+          x-text="stats.movies.missing + ' monitored without files'"></div>
+      </div>
+
+      <div class="space-y-4">
+        <!-- Series -->
+        <div class="bg-gray-800 rounded-xl p-4 border border-gray-700">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-sm font-medium">Series</span>
+            <span class="text-xs text-gray-400" x-text="(stats?.series?.count||0) + ' series · ' + (stats?.series?.size_gb||0) + ' GB'"></span>
+          </div>
+          <div x-show="stats?.series?.missing_episodes" class="text-xs text-amber-400"
+            x-text="stats.series.missing_episodes + ' missing episodes'"></div>
+          <template x-if="stats?.series?.by_status">
+            <div class="flex gap-3 mt-2 flex-wrap">
+              <template x-for="[status, count] in Object.entries(stats.series.by_status||{})" :key="status">
+                <span class="text-xs text-gray-400 capitalize" x-text="count + ' ' + status"></span>
+              </template>
+            </div>
+          </template>
+        </div>
+        <!-- Disk space -->
+        <template x-if="stats?.disk?.length">
+          <div class="bg-gray-800 rounded-xl p-4 border border-gray-700">
+            <div class="text-sm font-medium mb-3">Disk Space</div>
+            <template x-for="d in stats.disk" :key="d.path">
+              <div class="mb-3 last:mb-0">
+                <div class="flex justify-between text-xs text-gray-400 mb-1">
+                  <span class="truncate max-w-[55%] font-mono" x-text="d.path"></span>
+                  <span x-text="d.free_gb + ' GB free of ' + d.total_gb + ' GB'"></span>
+                </div>
+                <div class="h-2 bg-gray-700 rounded-full overflow-hidden">
+                  <div class="h-full rounded-full transition-all"
+                    :style="`width:${Math.min(100,(1-d.free_gb/(d.total_gb||1))*100)}%`"
+                    :class="(1-d.free_gb/(d.total_gb||1))>.9?'bg-red-500':(1-d.free_gb/(d.total_gb||1))>.75?'bg-amber-500':'bg-emerald-500'">
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- Recent runs -->
     <h3 class="text-sm font-medium text-gray-400 mb-2">Recent Runs</h3>
     <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
       <div class="overflow-x-auto scrollbar-none">
@@ -85,14 +158,14 @@
                 <td class="px-4 py-2 text-gray-400 text-xs" x-text="sumText(r.summary)"></td>
               </tr>
             </template>
-            <tr x-show="!runs.length"><td colspan="5" class="px-4 py-8 text-center text-gray-500">No runs yet. Start with an Analyze scan.</td></tr>
+            <tr x-show="!runs.length"><td colspan="5" class="px-4 py-8 text-center text-gray-500">No runs yet.</td></tr>
           </tbody>
         </table>
       </div>
     </div>
   </section>
 
-  <!-- LIBRARY -->
+  <!-- ═══════════════════════════════════ LIBRARY ═══════════════════════════════════ -->
   <section x-show="activeTab==='library'" x-cloak>
     <div class="flex items-center justify-between mb-4">
       <h2 class="text-base sm:text-lg font-semibold">Media Library</h2>
@@ -102,61 +175,79 @@
       </button>
     </div>
 
+    <!-- Sub-tabs: Movies | Series | Wanted -->
     <div class="flex gap-1 mb-4 bg-gray-800 border border-gray-700 rounded-lg p-1">
-      <button @click="setLibraryTab('movies')"
-        :class="libraryTab==='movies' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'"
-        class="flex-1 sm:flex-none px-4 py-1.5 rounded text-sm font-medium text-center">
-        Movies
-        <span class="text-xs text-gray-400 ml-1" x-show="movies.length" x-text="'(' + movies.length + ')'"></span>
-      </button>
-      <button @click="setLibraryTab('series')"
-        :class="libraryTab==='series' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'"
-        class="flex-1 sm:flex-none px-4 py-1.5 rounded text-sm font-medium text-center">
-        Series
-        <span class="text-xs text-gray-400 ml-1" x-show="series.length" x-text="'(' + series.length + ')'"></span>
-      </button>
+      <template x-for="lt in ['movies','series','wanted']" :key="lt">
+        <button @click="setLibraryTab(lt)"
+          :class="libraryTab===lt ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'"
+          class="flex-1 sm:flex-none px-4 py-1.5 rounded text-sm font-medium text-center capitalize">
+          <span x-text="lt"></span>
+          <span x-show="lt==='movies' && movies.length" class="text-xs text-gray-400 ml-1" x-text="'('+movies.length+')'"></span>
+          <span x-show="lt==='series' && series.length" class="text-xs text-gray-400 ml-1" x-text="'('+series.length+')'"></span>
+          <span x-show="lt==='wanted' && wanted.length" class="text-xs text-amber-400 ml-1" x-text="'('+wanted.length+')'"></span>
+        </button>
+      </template>
     </div>
 
-    <!-- Movies -->
+    <!-- ── MOVIES ── -->
     <div x-show="libraryTab==='movies'">
       <div class="flex flex-col sm:flex-row sm:items-center gap-2 mb-3">
         <input type="search" x-model="movieSearch" placeholder="Search movies…"
           class="bg-gray-700 rounded-lg px-3 py-2 text-sm border border-gray-600 focus:border-blue-500 outline-none w-full sm:w-72">
         <span class="text-xs text-gray-500" x-text="filteredMovies.length + ' movies · ' + filteredMovieSizeGb + ' GB'"></span>
       </div>
+
+      <!-- Bulk action bar -->
+      <div x-show="selectedMovieCount > 0" x-cloak
+        class="flex items-center gap-3 mb-3 bg-blue-900/30 border border-blue-700/50 rounded-lg px-4 py-2">
+        <span class="text-sm text-blue-300" x-text="selectedMovieCount + ' selected'"></span>
+        <button @click="bulkDeleteMovies()"
+          class="bg-red-700 hover:bg-red-600 px-3 py-1 rounded text-xs font-medium ml-auto">
+          Delete selected
+        </button>
+        <button @click="selectedMovies={}" class="text-gray-400 hover:text-white text-xs">Clear</button>
+      </div>
+
       <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
         <div class="overflow-x-auto scrollbar-none">
-          <table class="w-full text-sm min-w-[480px]">
+          <table class="w-full text-sm min-w-[520px]">
             <thead><tr class="border-b border-gray-700 text-gray-400 text-xs uppercase tracking-wide">
+              <th class="px-4 py-2 w-8">
+                <input type="checkbox" :checked="allMoviesSelected" @change="toggleAllMovies()">
+              </th>
               <th class="text-left px-4 py-2 cursor-pointer hover:text-white select-none" @click="sortMovies('title')">
-                Title <span x-text="movieSort.col==='title' ? (movieSort.dir===1?'↑':'↓') : ''"></span>
+                Title <span x-text="movieSort.col==='title'?(movieSort.dir===1?'↑':'↓'):''"></span>
               </th>
               <th class="text-left px-4 py-2 cursor-pointer hover:text-white select-none w-16" @click="sortMovies('year')">
-                Year <span x-text="movieSort.col==='year' ? (movieSort.dir===1?'↑':'↓') : ''"></span>
+                Year <span x-text="movieSort.col==='year'?(movieSort.dir===1?'↑':'↓'):''"></span>
               </th>
               <th class="text-right px-4 py-2 cursor-pointer hover:text-white select-none w-20" @click="sortMovies('size_gb')">
-                Size <span x-text="movieSort.col==='size_gb' ? (movieSort.dir===1?'↑':'↓') : ''"></span>
+                Size <span x-text="movieSort.col==='size_gb'?(movieSort.dir===1?'↑':'↓'):''"></span>
               </th>
               <th class="text-left px-4 py-2 w-28">Quality</th>
-              <th class="px-4 py-2 w-16"></th>
+              <th class="px-4 py-2 w-28"></th>
             </tr></thead>
             <tbody>
               <template x-for="m in filteredMovies" :key="m.id">
-                <tr class="border-b border-gray-700/50 hover:bg-gray-700/30">
+                <tr class="border-b border-gray-700/50 hover:bg-gray-700/30" :class="selectedMovies[m.id]?'bg-blue-900/20':''">
+                  <td class="px-4 py-2">
+                    <input type="checkbox" :checked="selectedMovies[m.id]" @change="selectedMovies={...selectedMovies,[m.id]:$event.target.checked}">
+                  </td>
                   <td class="px-4 py-2 font-medium" x-text="m.title"></td>
                   <td class="px-4 py-2 text-gray-400" x-text="m.year"></td>
                   <td class="px-4 py-2 text-right tabular-nums" x-text="m.size_gb + ' GB'"></td>
-                  <td class="px-4 py-2 text-xs" :class="m.quality==='missing' ? 'text-red-400' : 'text-gray-400'" x-text="m.quality"></td>
-                  <td class="px-4 py-2 text-right">
-                    <button @click="deleteMovie(m)" class="bg-red-800 hover:bg-red-700 px-2 py-1 rounded text-xs font-medium transition-colors">Del</button>
+                  <td class="px-4 py-2 text-xs" :class="m.quality==='missing'?'text-red-400':'text-gray-400'" x-text="m.quality"></td>
+                  <td class="px-4 py-2 text-right flex justify-end gap-1.5">
+                    <button @click="searchMovie(m)" title="Trigger search in Radarr"
+                      class="bg-blue-800 hover:bg-blue-700 px-2 py-1 rounded text-xs font-medium transition-colors">Search</button>
+                    <button @click="deleteMovie(m)"
+                      class="bg-red-800 hover:bg-red-700 px-2 py-1 rounded text-xs font-medium transition-colors">Del</button>
                   </td>
                 </tr>
               </template>
-              <tr x-show="libraryLoading">
-                <td colspan="5" class="px-4 py-10 text-center text-gray-500">Loading from Radarr…</td>
-              </tr>
+              <tr x-show="libraryLoading"><td colspan="6" class="px-4 py-10 text-center text-gray-500">Loading from Radarr…</td></tr>
               <tr x-show="!libraryLoading && !filteredMovies.length">
-                <td colspan="5" class="px-4 py-10 text-center text-gray-500">
+                <td colspan="6" class="px-4 py-10 text-center text-gray-500">
                   <span x-show="!movies.length">No movies found. Check Radarr is configured in Settings.</span>
                   <span x-show="movies.length && !filteredMovies.length">No movies match your search.</span>
                 </td>
@@ -167,48 +258,66 @@
       </div>
     </div>
 
-    <!-- Series -->
+    <!-- ── SERIES ── -->
     <div x-show="libraryTab==='series'">
       <div class="flex flex-col sm:flex-row sm:items-center gap-2 mb-3">
         <input type="search" x-model="seriesSearch" placeholder="Search series…"
           class="bg-gray-700 rounded-lg px-3 py-2 text-sm border border-gray-600 focus:border-blue-500 outline-none w-full sm:w-72">
         <span class="text-xs text-gray-500" x-text="filteredSeries.length + ' series · ' + filteredSeriesSizeGb + ' GB'"></span>
       </div>
+
+      <div x-show="selectedSeriesCount > 0" x-cloak
+        class="flex items-center gap-3 mb-3 bg-blue-900/30 border border-blue-700/50 rounded-lg px-4 py-2">
+        <span class="text-sm text-blue-300" x-text="selectedSeriesCount + ' selected'"></span>
+        <button @click="bulkDeleteSeries()"
+          class="bg-red-700 hover:bg-red-600 px-3 py-1 rounded text-xs font-medium ml-auto">
+          Delete selected
+        </button>
+        <button @click="selectedSeries={}" class="text-gray-400 hover:text-white text-xs">Clear</button>
+      </div>
+
       <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
         <div class="overflow-x-auto scrollbar-none">
-          <table class="w-full text-sm min-w-[520px]">
+          <table class="w-full text-sm min-w-[560px]">
             <thead><tr class="border-b border-gray-700 text-gray-400 text-xs uppercase tracking-wide">
+              <th class="px-4 py-2 w-8">
+                <input type="checkbox" :checked="allSeriesSelected" @change="toggleAllSeries()">
+              </th>
               <th class="text-left px-4 py-2 cursor-pointer hover:text-white select-none" @click="sortSeries('title')">
-                Title <span x-text="seriesSort.col==='title' ? (seriesSort.dir===1?'↑':'↓') : ''"></span>
+                Title <span x-text="seriesSort.col==='title'?(seriesSort.dir===1?'↑':'↓'):''"></span>
               </th>
-              <th class="text-left px-4 py-2 cursor-pointer hover:text-white select-none w-16" @click="sortSeries('year')">
-                Year <span x-text="seriesSort.col==='year' ? (seriesSort.dir===1?'↑':'↓') : ''"></span>
+              <th class="text-left px-4 py-2 w-16 cursor-pointer hover:text-white select-none" @click="sortSeries('year')">
+                Year <span x-text="seriesSort.col==='year'?(seriesSort.dir===1?'↑':'↓'):''"></span>
               </th>
-              <th class="text-right px-4 py-2 cursor-pointer hover:text-white select-none w-20" @click="sortSeries('size_gb')">
-                Size <span x-text="seriesSort.col==='size_gb' ? (seriesSort.dir===1?'↑':'↓') : ''"></span>
+              <th class="text-right px-4 py-2 w-20 cursor-pointer hover:text-white select-none" @click="sortSeries('size_gb')">
+                Size <span x-text="seriesSort.col==='size_gb'?(seriesSort.dir===1?'↑':'↓'):''"></span>
               </th>
               <th class="text-left px-4 py-2 w-24">Episodes</th>
               <th class="text-left px-4 py-2 w-20">Status</th>
-              <th class="px-4 py-2 w-16"></th>
+              <th class="px-4 py-2 w-28"></th>
             </tr></thead>
             <tbody>
               <template x-for="s in filteredSeries" :key="s.id">
-                <tr class="border-b border-gray-700/50 hover:bg-gray-700/30">
+                <tr class="border-b border-gray-700/50 hover:bg-gray-700/30" :class="selectedSeries[s.id]?'bg-blue-900/20':''">
+                  <td class="px-4 py-2">
+                    <input type="checkbox" :checked="selectedSeries[s.id]" @change="selectedSeries={...selectedSeries,[s.id]:$event.target.checked}">
+                  </td>
                   <td class="px-4 py-2 font-medium" x-text="s.title"></td>
                   <td class="px-4 py-2 text-gray-400" x-text="s.year"></td>
                   <td class="px-4 py-2 text-right tabular-nums" x-text="s.size_gb + ' GB'"></td>
                   <td class="px-4 py-2 text-xs text-gray-400" x-text="s.episode_count + ' / ' + s.episode_total"></td>
                   <td class="px-4 py-2 text-xs capitalize text-gray-400" x-text="s.status"></td>
-                  <td class="px-4 py-2 text-right">
-                    <button @click="deleteSeries(s)" class="bg-red-800 hover:bg-red-700 px-2 py-1 rounded text-xs font-medium transition-colors">Del</button>
+                  <td class="px-4 py-2 text-right flex justify-end gap-1.5">
+                    <button @click="searchSeries(s)" title="Trigger search in Sonarr"
+                      class="bg-blue-800 hover:bg-blue-700 px-2 py-1 rounded text-xs font-medium transition-colors">Search</button>
+                    <button @click="deleteSeries(s)"
+                      class="bg-red-800 hover:bg-red-700 px-2 py-1 rounded text-xs font-medium transition-colors">Del</button>
                   </td>
                 </tr>
               </template>
-              <tr x-show="libraryLoading">
-                <td colspan="6" class="px-4 py-10 text-center text-gray-500">Loading from Sonarr…</td>
-              </tr>
+              <tr x-show="libraryLoading"><td colspan="7" class="px-4 py-10 text-center text-gray-500">Loading from Sonarr…</td></tr>
               <tr x-show="!libraryLoading && !filteredSeries.length">
-                <td colspan="6" class="px-4 py-10 text-center text-gray-500">
+                <td colspan="7" class="px-4 py-10 text-center text-gray-500">
                   <span x-show="!series.length">No series found. Check Sonarr is configured in Settings.</span>
                   <span x-show="series.length && !filteredSeries.length">No series match your search.</span>
                 </td>
@@ -218,9 +327,59 @@
         </div>
       </div>
     </div>
+
+    <!-- ── WANTED ── -->
+    <div x-show="libraryTab==='wanted'">
+      <div class="flex flex-col sm:flex-row sm:items-center gap-2 mb-3">
+        <input type="search" x-model="wantedSearch" placeholder="Search wanted…"
+          class="bg-gray-700 rounded-lg px-3 py-2 text-sm border border-gray-600 focus:border-blue-500 outline-none w-full sm:w-72">
+        <button @click="loadWanted()" :disabled="wantedLoading"
+          class="bg-gray-700 hover:bg-gray-600 disabled:opacity-40 px-3 py-2 rounded-lg text-sm font-medium shrink-0 transition-colors">
+          <span x-text="wantedLoading ? 'Loading…' : 'Refresh'"></span>
+        </button>
+        <span class="text-xs text-gray-500" x-text="filteredWanted.length + ' items'"></span>
+      </div>
+      <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
+        <div class="overflow-x-auto scrollbar-none">
+          <table class="w-full text-sm min-w-[420px]">
+            <thead><tr class="border-b border-gray-700 text-gray-400 text-xs uppercase tracking-wide">
+              <th class="text-left px-4 py-2">Title</th>
+              <th class="text-left px-4 py-2 w-16">Type</th>
+              <th class="text-left px-4 py-2 w-16">Year</th>
+              <th class="text-left px-4 py-2 w-32">Missing</th>
+              <th class="text-left px-4 py-2 w-20">Status</th>
+              <th class="px-4 py-2 w-20"></th>
+            </tr></thead>
+            <tbody>
+              <template x-for="w in filteredWanted" :key="w.type+w.id">
+                <tr class="border-b border-gray-700/50 hover:bg-gray-700/30">
+                  <td class="px-4 py-2 font-medium" x-text="w.title"></td>
+                  <td class="px-4 py-2 text-xs text-gray-400 capitalize" x-text="w.type"></td>
+                  <td class="px-4 py-2 text-gray-400" x-text="w.year||'—'"></td>
+                  <td class="px-4 py-2 text-xs text-amber-400"
+                    x-text="w.type==='movie'?'No file':w.missing_episodes+' episode'+(w.missing_episodes!==1?'s':'')"></td>
+                  <td class="px-4 py-2 text-xs capitalize text-gray-400" x-text="w.status"></td>
+                  <td class="px-4 py-2 text-right">
+                    <button @click="searchWanted(w)"
+                      class="bg-blue-800 hover:bg-blue-700 px-2 py-1 rounded text-xs font-medium transition-colors">Search</button>
+                  </td>
+                </tr>
+              </template>
+              <tr x-show="wantedLoading"><td colspan="6" class="px-4 py-10 text-center text-gray-500">Loading…</td></tr>
+              <tr x-show="!wantedLoading && !filteredWanted.length">
+                <td colspan="6" class="px-4 py-10 text-center text-gray-500">
+                  <span x-show="!wanted.length">Nothing missing — library is complete.</span>
+                  <span x-show="wanted.length && !filteredWanted.length">No items match your search.</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </section>
 
-  <!-- ANALYZE -->
+  <!-- ═══════════════════════════════════ ANALYZE ═══════════════════════════════════ -->
   <section x-show="activeTab==='analyze'" x-cloak>
     <div class="flex items-center justify-between mb-4">
       <h2 class="text-base sm:text-lg font-semibold">Removal Candidates</h2>
@@ -249,28 +408,46 @@
       </label>
       <span class="flex items-center text-xs text-gray-500" x-text="filteredCandidates.length + ' items · ' + filteredSizeGb + ' GB'"></span>
     </div>
+
+    <!-- Bulk action bar -->
+    <div x-show="selectedCandidateCount > 0" x-cloak
+      class="flex items-center gap-3 mb-3 bg-blue-900/30 border border-blue-700/50 rounded-lg px-4 py-2">
+      <span class="text-sm text-blue-300" x-text="selectedCandidateCount + ' selected'"></span>
+      <button @click="bulkDeleteCandidates()"
+        class="bg-red-700 hover:bg-red-600 px-3 py-1 rounded text-xs font-medium ml-auto">
+        Delete selected
+      </button>
+      <button @click="selectedCandidates={}" class="text-gray-400 hover:text-white text-xs">Clear</button>
+    </div>
+
     <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
       <div class="overflow-x-auto scrollbar-none">
-        <table class="w-full text-sm min-w-[520px]">
+        <table class="w-full text-sm min-w-[560px]">
           <thead><tr class="border-b border-gray-700 text-gray-400 text-xs uppercase tracking-wide">
+            <th class="px-4 py-2 w-8">
+              <input type="checkbox" :checked="allCandidatesSelected" @change="toggleAllCandidates()">
+            </th>
             <th class="text-left px-4 py-2">Title</th>
             <th class="text-left px-4 py-2 w-16">Type</th>
             <th class="text-right px-4 py-2 w-20">Size</th>
             <th class="text-left px-4 py-2 w-24">Watched</th>
-            <th class="text-right px-4 py-2 w-20">Stale</th>
+            <th class="text-right px-4 py-2 w-16">Stale</th>
             <th class="text-right px-4 py-2 w-16">Score</th>
-            <th class="px-4 py-2 w-16"></th>
+            <th class="px-4 py-2 w-14"></th>
           </tr></thead>
           <tbody>
             <template x-for="c in filteredCandidates" :key="c.id">
-              <tr class="border-b border-gray-700/50 hover:bg-gray-700/30">
-                <td class="px-4 py-2 font-medium" x-text="c.title + (c.year ? ' (' + c.year + ')' : '')"></td>
+              <tr class="border-b border-gray-700/50 hover:bg-gray-700/30" :class="selectedCandidates[c.id]?'bg-blue-900/20':''">
+                <td class="px-4 py-2">
+                  <input type="checkbox" :checked="selectedCandidates[c.id]" @change="selectedCandidates={...selectedCandidates,[c.id]:$event.target.checked}">
+                </td>
+                <td class="px-4 py-2 font-medium" x-text="c.title+(c.year?' ('+c.year+')':'')"></td>
                 <td class="px-4 py-2 text-gray-400 capitalize text-xs" x-text="c.media_type"></td>
-                <td class="px-4 py-2 text-right tabular-nums text-xs" x-text="c.size_gb + ' GB'"></td>
+                <td class="px-4 py-2 text-right tabular-nums text-xs" x-text="c.size_gb+' GB'"></td>
                 <td class="px-4 py-2 text-gray-400 text-xs" x-text="c.last_watched"></td>
                 <td class="px-4 py-2 text-right tabular-nums text-xs"
-                  :class="c.days_stale>=365 ? 'text-red-400' : c.days_stale>=180 ? 'text-amber-400' : ''"
-                  x-text="c.days_stale===99999 ? 'Never' : c.days_stale"></td>
+                  :class="c.days_stale>=365?'text-red-400':c.days_stale>=180?'text-amber-400':''"
+                  x-text="c.days_stale===99999?'Never':c.days_stale"></td>
                 <td class="px-4 py-2 text-right tabular-nums font-mono text-xs text-gray-300" x-text="c.score"></td>
                 <td class="px-4 py-2 text-right">
                   <button @click="delCandidate(c)" class="bg-red-800 hover:bg-red-700 px-2 py-1 rounded text-xs font-medium transition-colors">Del</button>
@@ -278,8 +455,8 @@
               </tr>
             </template>
             <tr x-show="!filteredCandidates.length">
-              <td colspan="7" class="px-4 py-10 text-center text-gray-500">
-                <span x-show="!candidates.length">No data &mdash; run a scan to populate candidates.</span>
+              <td colspan="8" class="px-4 py-10 text-center text-gray-500">
+                <span x-show="!candidates.length">No data — run a scan first.</span>
                 <span x-show="candidates.length && !filteredCandidates.length">No items match the current filters.</span>
               </td>
             </tr>
@@ -289,7 +466,7 @@
     </div>
   </section>
 
-  <!-- UPGRADE -->
+  <!-- ═══════════════════════════════════ UPGRADE ═══════════════════════════════════ -->
   <section x-show="activeTab==='upgrade'" x-cloak>
     <h2 class="text-base sm:text-lg font-semibold mb-4">Quality Upgrade</h2>
     <div class="bg-gray-800 rounded-xl border border-gray-700 p-4 sm:p-6">
@@ -303,11 +480,11 @@
           <label class="block text-sm text-gray-400 mb-1">Score Threshold</label>
           <input type="number" x-model="upgradeThreshold" min="0" max="100" step="1"
             class="bg-gray-700 rounded-lg px-3 py-2 w-full text-sm border border-gray-600 focus:border-blue-500 outline-none">
-          <p class="text-xs text-gray-500 mt-1">Files scoring below this will be queued for replacement</p>
+          <p class="text-xs text-gray-500 mt-1">Files scoring at or below this will be queued for replacement</p>
         </div>
         <label class="flex items-center gap-2 cursor-pointer">
           <input type="checkbox" x-model="upgradeDryRun" class="rounded">
-          <span class="text-sm text-gray-400">Dry run &mdash; log only, no commands sent</span>
+          <span class="text-sm text-gray-400">Dry run — log only, no commands sent</span>
         </label>
         <button type="submit" :disabled="upgrading"
           class="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-40 py-2.5 rounded-lg text-sm font-medium transition-colors">
@@ -326,7 +503,7 @@
     </div>
   </section>
 
-  <!-- SCHEDULES -->
+  <!-- ═══════════════════════════════════ SCHEDULES ═══════════════════════════════════ -->
   <section x-show="activeTab==='schedules'" x-cloak>
     <div class="flex items-center justify-between mb-4">
       <h2 class="text-base sm:text-lg font-semibold">Scheduled Jobs</h2>
@@ -347,7 +524,11 @@
             class="bg-gray-700 rounded-lg px-3 py-2 w-full text-sm font-mono border border-gray-600 focus:border-blue-500 outline-none">
         </div>
       </div>
-      <p class="text-xs text-gray-500 mb-3"><code class="bg-gray-700 px-1 rounded">0 3 * * *</code> = daily 3am &nbsp;&bull;&nbsp; <code class="bg-gray-700 px-1 rounded">0 3 * * 0</code> = weekly Sunday</p>
+      <p class="text-xs text-gray-500 mb-3">
+        <code class="bg-gray-700 px-1 rounded">0 3 * * *</code> = daily 3am &nbsp;&bull;&nbsp;
+        <code class="bg-gray-700 px-1 rounded">0 3 * * 0</code> = weekly Sunday &nbsp;&bull;&nbsp;
+        <code class="bg-gray-700 px-1 rounded">0 */6 * * *</code> = every 6 hours
+      </p>
       <div class="flex gap-2">
         <button @click="addSched()" class="bg-emerald-700 hover:bg-emerald-600 px-4 py-1.5 rounded-lg text-sm">Save</button>
         <button @click="showNewSched=false" class="text-gray-400 hover:text-white px-4 py-1.5 text-sm">Cancel</button>
@@ -367,8 +548,8 @@
                 <td class="px-4 py-2 font-mono text-gray-300 text-xs" x-text="s.cron"></td>
                 <td class="px-4 py-2">
                   <button @click="toggleSched(s)"
-                    :class="s.enabled ? 'bg-emerald-900 text-emerald-300 border-emerald-700' : 'bg-gray-700 text-gray-400 border-gray-600'"
-                    class="px-2 py-0.5 rounded-full text-xs border" x-text="s.enabled ? 'On' : 'Off'"></button>
+                    :class="s.enabled?'bg-emerald-900 text-emerald-300 border-emerald-700':'bg-gray-700 text-gray-400 border-gray-600'"
+                    class="px-2 py-0.5 rounded-full text-xs border" x-text="s.enabled?'On':'Off'"></button>
                 </td>
                 <td class="px-4 py-2 text-right">
                   <button @click="delSched(s.id)" class="text-red-400 hover:text-red-300 text-xs">Remove</button>
@@ -382,7 +563,7 @@
     </div>
   </section>
 
-  <!-- HISTORY -->
+  <!-- ═══════════════════════════════════ HISTORY ═══════════════════════════════════ -->
   <section x-show="activeTab==='history'" x-cloak>
     <h2 class="text-base sm:text-lg font-semibold mb-4">Run History</h2>
     <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
@@ -406,31 +587,25 @@
               <tr x-show="selRun?.id===r.id" class="bg-gray-900/80 border-b border-gray-700/50">
                 <td colspan="6" class="px-5 py-4">
 
-                  <!-- UPGRADE: parsed sections -->
+                  <!-- Upgrade: parsed sections -->
                   <template x-if="selRun?.id===r.id && r.type==='upgrade'">
                     <div class="space-y-4">
-
-                      <!-- Diagnostic stats (parsed, threshold, split counts) -->
                       <template x-if="parsedSelRun && parsedSelRun.stats.length">
                         <div class="text-xs text-gray-500 space-y-0.5 pb-2 border-b border-gray-800">
-                          <template x-for="s in parsedSelRun.stats" :key="s">
-                            <div x-text="s"></div>
-                          </template>
+                          <template x-for="s in parsedSelRun.stats" :key="s"><div x-text="s"></div></template>
                         </div>
                       </template>
-
-                      <!-- Matched / triggered -->
                       <template x-if="parsedSelRun && (parsedSelRun.triggered.length || parsedSelRun.dryRun.length)">
                         <div>
                           <div class="flex items-center gap-2 mb-2">
                             <span class="text-xs font-semibold text-emerald-400">Matched</span>
                             <span class="bg-emerald-900/60 text-emerald-300 text-xs px-1.5 py-0.5 rounded-full font-medium"
-                              x-text="parsedSelRun.triggered.length || parsedSelRun.dryRun.length"></span>
+                              x-text="parsedSelRun.triggered.length||parsedSelRun.dryRun.length"></span>
                             <span x-show="parsedSelRun.dryRun.length && !parsedSelRun.triggered.length"
                               class="text-xs text-gray-500 italic">dry run — no commands sent</span>
                           </div>
                           <div class="space-y-1 max-h-52 overflow-y-auto">
-                            <template x-for="item in (parsedSelRun.triggered.length ? parsedSelRun.triggered : parsedSelRun.dryRun)" :key="item">
+                            <template x-for="item in (parsedSelRun.triggered.length?parsedSelRun.triggered:parsedSelRun.dryRun)" :key="item">
                               <div class="flex items-baseline gap-2 text-xs">
                                 <span class="text-emerald-500 shrink-0">✓</span>
                                 <span class="text-gray-200" x-text="item"></span>
@@ -439,8 +614,6 @@
                           </div>
                         </div>
                       </template>
-
-                      <!-- Unmatched -->
                       <template x-if="parsedSelRun && parsedSelRun.unmatched.length">
                         <div>
                           <div class="flex items-center gap-2 mb-2">
@@ -459,8 +632,6 @@
                           </div>
                         </div>
                       </template>
-
-                      <!-- Errors -->
                       <template x-if="parsedSelRun && parsedSelRun.errors.length">
                         <div>
                           <div class="flex items-center gap-2 mb-2">
@@ -478,16 +649,13 @@
                           </div>
                         </div>
                       </template>
-
-                      <!-- Nothing parsed (old run / no log) -->
                       <template x-if="!parsedSelRun">
-                        <div class="text-xs text-gray-500">No log output recorded for this run.</div>
+                        <div class="text-xs text-gray-500">No log output recorded.</div>
                       </template>
-
                     </div>
                   </template>
 
-                  <!-- ANALYZE: summary stats -->
+                  <!-- Analyze: summary stats -->
                   <template x-if="selRun?.id===r.id && r.type==='analyze'">
                     <div>
                       <template x-if="r.status==='success'">
@@ -503,7 +671,7 @@
                         </div>
                       </template>
                       <template x-if="r.status==='error'">
-                        <div class="text-xs text-red-300" x-text="r.log || 'Unknown error'"></div>
+                        <div class="text-xs text-red-300" x-text="r.log||'Unknown error'"></div>
                       </template>
                     </div>
                   </template>
@@ -518,15 +686,25 @@
     </div>
   </section>
 
-  <!-- SETTINGS -->
+  <!-- ═══════════════════════════════════ SETTINGS ═══════════════════════════════════ -->
   <section x-show="activeTab==='settings'" x-cloak>
     <h2 class="text-base sm:text-lg font-semibold mb-4">Settings</h2>
     <form @submit.prevent="saveConfig()" class="space-y-4">
       <template x-for="f in configFields" :key="f.key">
         <div>
           <label class="block text-sm text-gray-400 mb-1" x-text="f.label"></label>
-          <input :type="f.type" x-model="config[f.key]" autocomplete="off"
-            class="bg-gray-700 rounded-lg px-3 py-2 w-full text-sm font-mono border border-gray-600 focus:border-blue-500 outline-none">
+          <template x-if="f.options">
+            <select x-model="config[f.key]" class="bg-gray-700 rounded-lg px-3 py-2 w-full text-sm border border-gray-600 focus:border-blue-500 outline-none">
+              <template x-for="o in f.options" :key="o.value">
+                <option :value="o.value" x-text="o.label"></option>
+              </template>
+            </select>
+          </template>
+          <template x-if="!f.options">
+            <input :type="f.type" x-model="config[f.key]" autocomplete="off"
+              class="bg-gray-700 rounded-lg px-3 py-2 w-full text-sm font-mono border border-gray-600 focus:border-blue-500 outline-none">
+          </template>
+          <p x-show="f.hint" class="text-xs text-gray-500 mt-1" x-text="f.hint"></p>
         </div>
       </template>
       <button type="submit" class="w-full sm:w-auto bg-blue-600 hover:bg-blue-500 px-6 py-2.5 rounded-lg text-sm font-medium transition-colors">Save Settings</button>
@@ -549,29 +727,46 @@ function app() {
     newSched: { job_type: 'analyze', cron: '0 3 * * *' },
     selRun: null,
     af: { gb: 0, days: 0, type: '' },
+
+    // Library
     libraryTab: 'movies',
-    movies: [], series: [],
-    movieSearch: '', seriesSearch: '',
+    movies: [], series: [], wanted: [],
+    movieSearch: '', seriesSearch: '', wantedSearch: '',
     movieSort: { col: 'title', dir: 1 },
     seriesSort: { col: 'title', dir: 1 },
-    libraryLoading: false,
+    libraryLoading: false, wantedLoading: false,
+
+    // Selection
+    selectedMovies: {}, selectedSeries: {}, selectedCandidates: {},
+
+    // Dashboard stats
+    stats: null,
 
     configFields: [
-      {key:'radarr_url',        label:'Radarr URL',                type:'url'},
-      {key:'radarr_api_key',    label:'Radarr API Key',            type:'password'},
-      {key:'sonarr_url',        label:'Sonarr URL',                type:'url'},
-      {key:'sonarr_api_key',    label:'Sonarr API Key',            type:'password'},
-      {key:'plex_url',          label:'Plex URL',                  type:'url'},
-      {key:'plex_token',        label:'Plex Token',                type:'password'},
-      {key:'quality_threshold', label:'Quality Score Threshold',   type:'number'},
-      {key:'min_size_gb',       label:'Min Size GB (analyze)',      type:'number'},
-      {key:'min_days_stale',    label:'Min Days Stale (analyze)',   type:'number'},
+      {key:'radarr_url',        label:'Radarr URL',                        type:'url'},
+      {key:'radarr_api_key',    label:'Radarr API Key',                    type:'password'},
+      {key:'sonarr_url',        label:'Sonarr URL',                        type:'url'},
+      {key:'sonarr_api_key',    label:'Sonarr API Key',                    type:'password'},
+      {key:'plex_url',          label:'Plex URL',                          type:'url'},
+      {key:'plex_token',        label:'Plex Token',                        type:'password'},
+      {key:'quality_threshold', label:'Quality Score Threshold',           type:'number'},
+      {key:'min_size_gb',       label:'Min Size GB (analyze)',              type:'number'},
+      {key:'min_days_stale',    label:'Min Days Stale (analyze)',           type:'number'},
+      {key:'webhook_url',       label:'Notification Webhook URL',          type:'url',
+       hint:'Paste a Discord, Ntfy, Gotify, or generic webhook URL to get notified when jobs complete.'},
+      {key:'webhook_type',      label:'Webhook Type',                      type:'text', options:[
+        {value:'discord', label:'Discord'},
+        {value:'ntfy',    label:'Ntfy'},
+        {value:'gotify',  label:'Gotify'},
+        {value:'generic', label:'Generic JSON'},
+      ]},
     ],
 
     tabIcon(t) {
       return {dashboard:'⊞',library:'🎬',analyze:'🔍',upgrade:'⬆',schedules:'🕐',history:'📋',settings:'⚙'}[t]||'●';
     },
 
+    // ── Computed ──────────────────────────────────────────────────────────────
     get totalSizeGb()  { return this.candidates.reduce((s,c)=>s+(c.size_gb||0),0).toFixed(1); },
     get filteredCandidates() {
       return this.candidates.filter(c =>
@@ -582,176 +777,278 @@ function app() {
     get filteredSizeGb() { return this.filteredCandidates.reduce((s,c)=>s+(c.size_gb||0),0).toFixed(1); },
     get filteredMovies() {
       const q = this.movieSearch.toLowerCase();
-      const list = this.movies.filter(m => !q || m.title.toLowerCase().includes(q));
+      const list = this.movies.filter(m => !q||m.title.toLowerCase().includes(q));
       const {col,dir} = this.movieSort;
-      return list.sort((a,b) => ((a[col]??'') < (b[col]??'') ? -dir : (a[col]??'') > (b[col]??'') ? dir : 0));
+      return list.sort((a,b)=>((a[col]??'')<(b[col]??'')?-dir:(a[col]??'')>(b[col]??'')?dir:0));
     },
     get filteredMovieSizeGb() { return this.filteredMovies.reduce((s,m)=>s+(m.size_gb||0),0).toFixed(1); },
     get filteredSeries() {
       const q = this.seriesSearch.toLowerCase();
-      const list = this.series.filter(s => !q || s.title.toLowerCase().includes(q));
+      const list = this.series.filter(s => !q||s.title.toLowerCase().includes(q));
       const {col,dir} = this.seriesSort;
-      return list.sort((a,b) => ((a[col]??'') < (b[col]??'') ? -dir : (a[col]??'') > (b[col]??'') ? dir : 0));
+      return list.sort((a,b)=>((a[col]??'')<(b[col]??'')?-dir:(a[col]??'')>(b[col]??'')?dir:0));
     },
     get filteredSeriesSizeGb() { return this.filteredSeries.reduce((s,x)=>s+(x.size_gb||0),0).toFixed(1); },
+    get filteredWanted() {
+      const q = this.wantedSearch.toLowerCase();
+      return this.wanted.filter(w => !q||w.title.toLowerCase().includes(q));
+    },
 
+    // Selection computed
+    get selectedMovieCount()    { return Object.values(this.selectedMovies).filter(Boolean).length; },
+    get selectedSeriesCount()   { return Object.values(this.selectedSeries).filter(Boolean).length; },
+    get selectedCandidateCount(){ return Object.values(this.selectedCandidates).filter(Boolean).length; },
+    get allMoviesSelected()     { return this.filteredMovies.length>0 && this.filteredMovies.every(m=>this.selectedMovies[m.id]); },
+    get allSeriesSelected()     { return this.filteredSeries.length>0 && this.filteredSeries.every(s=>this.selectedSeries[s.id]); },
+    get allCandidatesSelected() { return this.filteredCandidates.length>0 && this.filteredCandidates.every(c=>this.selectedCandidates[c.id]); },
+
+    // History parsed log
+    get parsedSelRun() {
+      if (!this.selRun?.log) return null;
+      const lines = this.selRun.log.split('\n').filter(l=>l.trim());
+      if (!lines.length) return null;
+      const stats=[],triggered=[],dryRun=[],unmatched=[],errors=[];
+      for (const line of lines) {
+        if (line.startsWith('Triggered: '))     triggered.push(line.slice(11));
+        else if (line.startsWith('[DRY-RUN] '))  dryRun.push(line.slice(10));
+        else if (line.startsWith('No match: '))  unmatched.push(line.slice(10));
+        else if (/^Error /.test(line))           errors.push(line.slice(6));
+        else                                     stats.push(line);
+      }
+      return {stats,triggered,dryRun,unmatched,errors};
+    },
+
+    // ── Init ──────────────────────────────────────────────────────────────────
     async init() {
-      await Promise.all([this.loadRuns(), this.loadCandidates(), this.loadSchedules(), this.loadConfig()]);
-      setInterval(() => this.loadRuns(), 15000);
+      await Promise.all([this.loadRuns(),this.loadCandidates(),this.loadSchedules(),this.loadConfig()]);
+      this.loadStats();
+      setInterval(()=>this.loadRuns(),15000);
     },
 
     setTab(t) {
       this.activeTab = t;
-      if (t === 'library' && !this.movies.length && !this.series.length) this.loadLibrary();
+      if (t==='library' && !this.movies.length && !this.series.length) this.loadLibrary();
+      if (t==='dashboard' && !this.stats) this.loadStats();
     },
-    setLibraryTab(t) { this.libraryTab = t; },
+    setLibraryTab(t) {
+      this.libraryTab = t;
+      if (t==='wanted' && !this.wanted.length && !this.wantedLoading) this.loadWanted();
+    },
+
+    // ── Library loading ───────────────────────────────────────────────────────
     async loadLibrary() {
       this.libraryLoading = true;
-      await Promise.all([this.loadMovies(), this.loadSeriesList()]);
+      await Promise.all([this.loadMovies(),this.loadSeriesList()]);
       this.libraryLoading = false;
     },
     async loadMovies() {
-      try { this.movies = await this.req('GET', '/api/library/movies'); }
-      catch(e) { this.flash('Radarr: ' + e.message, true); }
+      try { this.movies = await this.req('GET','/api/library/movies'); }
+      catch(e) { this.flash('Radarr: '+e.message,true); }
     },
     async loadSeriesList() {
-      try { this.series = await this.req('GET', '/api/library/series'); }
-      catch(e) { this.flash('Sonarr: ' + e.message, true); }
+      try { this.series = await this.req('GET','/api/library/series'); }
+      catch(e) { this.flash('Sonarr: '+e.message,true); }
     },
-    refreshLibrary() { this.movies=[]; this.series=[]; this.loadLibrary(); },
-    sortMovies(col) {
-      this.movieSort = this.movieSort.col===col ? {col, dir:this.movieSort.dir*-1} : {col, dir:1};
+    async loadWanted() {
+      this.wantedLoading = true;
+      try { this.wanted = await this.req('GET','/api/library/wanted'); }
+      catch(e) { this.flash('Wanted: '+e.message,true); }
+      this.wantedLoading = false;
     },
-    sortSeries(col) {
-      this.seriesSort = this.seriesSort.col===col ? {col, dir:this.seriesSort.dir*-1} : {col, dir:1};
+    async loadStats() {
+      try { this.stats = await this.req('GET','/api/stats'); }
+      catch(e) { /* silent — stats are optional */ }
     },
-    async deleteMovie(m) {
-      if (!confirm(`Delete "${m.title}" and remove its files from disk?\n\nThis will also add it to Radarr's exclusion list.`)) return;
-      try {
-        await this.req('DELETE', `/api/library/movies/${m.id}`);
-        this.movies = this.movies.filter(x => x.id!==m.id);
-        this.flash(`Deleted: ${m.title}`);
-      } catch(e) { this.flash('Delete failed: '+e.message, true); }
+    refreshLibrary() { this.movies=[]; this.series=[]; this.selectedMovies={}; this.selectedSeries={}; this.loadLibrary(); },
+
+    // ── Sort ──────────────────────────────────────────────────────────────────
+    sortMovies(col) { this.movieSort = this.movieSort.col===col?{col,dir:this.movieSort.dir*-1}:{col,dir:1}; },
+    sortSeries(col) { this.seriesSort = this.seriesSort.col===col?{col,dir:this.seriesSort.dir*-1}:{col,dir:1}; },
+
+    // ── Selection helpers ──────────────────────────────────────────────────────
+    toggleAllMovies() {
+      this.selectedMovies = this.allMoviesSelected ? {} :
+        Object.fromEntries(this.filteredMovies.map(m=>[m.id,true]));
     },
-    async deleteSeries(s) {
-      if (!confirm(`Delete "${s.title}" and ALL its episode files from disk?\n\nThis will also add it to Sonarr's exclusion list.`)) return;
-      try {
-        await this.req('DELETE', `/api/library/series/${s.id}`);
-        this.series = this.series.filter(x => x.id!==s.id);
-        this.flash(`Deleted: ${s.title}`);
-      } catch(e) { this.flash('Delete failed: '+e.message, true); }
+    toggleAllSeries() {
+      this.selectedSeries = this.allSeriesSelected ? {} :
+        Object.fromEntries(this.filteredSeries.map(s=>[s.id,true]));
+    },
+    toggleAllCandidates() {
+      this.selectedCandidates = this.allCandidatesSelected ? {} :
+        Object.fromEntries(this.filteredCandidates.map(c=>[c.id,true]));
     },
 
-    async req(method, path, body=null, isForm=false) {
-      const opts = {method, headers:{}};
-      if (body && !isForm) { opts.headers['Content-Type']='application/json'; opts.body=JSON.stringify(body); }
-      else if (body) { opts.body=body; }
-      const r = await fetch(path, opts);
+    // ── Individual delete ──────────────────────────────────────────────────────
+    async deleteMovie(m) {
+      if (!confirm(`Delete "${m.title}" and remove its files?\n\nAlso adds to Radarr's exclusion list.`)) return;
+      try {
+        await this.req('DELETE',`/api/library/movies/${m.id}`);
+        this.movies = this.movies.filter(x=>x.id!==m.id);
+        delete this.selectedMovies[m.id];
+        this.flash(`Deleted: ${m.title}`);
+      } catch(e) { this.flash('Delete failed: '+e.message,true); }
+    },
+    async deleteSeries(s) {
+      if (!confirm(`Delete "${s.title}" and ALL its episode files?\n\nAlso adds to Sonarr's exclusion list.`)) return;
+      try {
+        await this.req('DELETE',`/api/library/series/${s.id}`);
+        this.series = this.series.filter(x=>x.id!==s.id);
+        delete this.selectedSeries[s.id];
+        this.flash(`Deleted: ${s.title}`);
+      } catch(e) { this.flash('Delete failed: '+e.message,true); }
+    },
+    async delCandidate(c) {
+      if (!confirm(`Delete "${c.title}" and remove its files?\n\nAlso adds to the ignore list.`)) return;
+      try {
+        await this.req('DELETE',`/api/candidates/${c.id}`);
+        this.candidates = this.candidates.filter(x=>x.id!==c.id);
+        delete this.selectedCandidates[c.id];
+        this.flash(`Deleted: ${c.title}`);
+      } catch(e) { this.flash('Delete failed: '+e.message,true); }
+    },
+
+    // ── Bulk delete ────────────────────────────────────────────────────────────
+    async bulkDeleteMovies() {
+      const ids = Object.entries(this.selectedMovies).filter(([,v])=>v).map(([k])=>+k);
+      if (!ids.length) return;
+      if (!confirm(`Delete ${ids.length} movie(s) and their files from disk?\n\nAll will be added to Radarr's exclusion list.`)) return;
+      let ok=0,fail=0;
+      for (const id of ids) {
+        try { await this.req('DELETE',`/api/library/movies/${id}`); this.movies=this.movies.filter(m=>m.id!==id); ok++; }
+        catch { fail++; }
+      }
+      this.selectedMovies = {};
+      this.flash(`Deleted ${ok}${fail?`, ${fail} failed`:''}`);
+    },
+    async bulkDeleteSeries() {
+      const ids = Object.entries(this.selectedSeries).filter(([,v])=>v).map(([k])=>+k);
+      if (!ids.length) return;
+      if (!confirm(`Delete ${ids.length} series and ALL their episode files?\n\nAll will be added to Sonarr's exclusion list.`)) return;
+      let ok=0,fail=0;
+      for (const id of ids) {
+        try { await this.req('DELETE',`/api/library/series/${id}`); this.series=this.series.filter(s=>s.id!==id); ok++; }
+        catch { fail++; }
+      }
+      this.selectedSeries = {};
+      this.flash(`Deleted ${ok}${fail?`, ${fail} failed`:''}`);
+    },
+    async bulkDeleteCandidates() {
+      const ids = Object.entries(this.selectedCandidates).filter(([,v])=>v).map(([k])=>+k);
+      if (!ids.length) return;
+      if (!confirm(`Delete ${ids.length} item(s) from disk?\n\nAll will be added to the ignore list.`)) return;
+      let ok=0,fail=0;
+      for (const id of ids) {
+        try { await this.req('DELETE',`/api/candidates/${id}`); this.candidates=this.candidates.filter(c=>c.id!==id); ok++; }
+        catch { fail++; }
+      }
+      this.selectedCandidates = {};
+      this.flash(`Deleted ${ok}${fail?`, ${fail} failed`:''}`);
+    },
+
+    // ── Search (trigger Radarr/Sonarr) ────────────────────────────────────────
+    async searchMovie(m) {
+      try { await this.req('POST',`/api/library/movies/${m.id}/search`); this.flash(`Search triggered: ${m.title}`); }
+      catch(e) { this.flash('Search failed: '+e.message,true); }
+    },
+    async searchSeries(s) {
+      try { await this.req('POST',`/api/library/series/${s.id}/search`); this.flash(`Search triggered: ${s.title}`); }
+      catch(e) { this.flash('Search failed: '+e.message,true); }
+    },
+    async searchWanted(w) {
+      const fn = w.type==='movie' ? this.searchMovie.bind(this) : this.searchSeries.bind(this);
+      await fn(w);
+    },
+
+    // ── API helpers ────────────────────────────────────────────────────────────
+    async req(method,path,body=null,isForm=false) {
+      const opts={method,headers:{}};
+      if (body&&!isForm){opts.headers['Content-Type']='application/json';opts.body=JSON.stringify(body);}
+      else if (body){opts.body=body;}
+      const r=await fetch(path,opts);
       if (!r.ok) throw new Error(await r.text());
       return r.json();
     },
-    flash(msg, err=false) { this.banner=msg; this.bannerErr=err; setTimeout(()=>this.banner='',5000); },
-    async loadRuns()       { this.runs = await this.req('GET','/api/runs'); },
-    async loadCandidates() { this.candidates = await this.req('GET','/api/candidates'); },
-    async loadSchedules()  { this.schedules = await this.req('GET','/api/schedules'); },
-    async loadConfig()     { this.config = await this.req('GET','/api/config'); },
+    flash(msg,err=false){this.banner=msg;this.bannerErr=err;setTimeout(()=>this.banner='',5000);},
+    async loadRuns()       {this.runs=await this.req('GET','/api/runs');},
+    async loadCandidates() {this.candidates=await this.req('GET','/api/candidates');},
+    async loadSchedules()  {this.schedules=await this.req('GET','/api/schedules');},
+    async loadConfig()     {this.config=await this.req('GET','/api/config');},
 
+    // ── Triggers ───────────────────────────────────────────────────────────────
     async triggerAnalyze() {
       this.analyzing = true;
       try {
         await this.req('POST','/api/runs/analyze',{});
         this.flash('Analyze scan started');
-        const t = setInterval(async () => {
+        const t=setInterval(async()=>{
           await this.loadRuns();
-          const latest = this.runs.find(r=>r.type==='analyze');
-          if (latest && latest.status!=='running') {
-            clearInterval(t); this.analyzing=false;
+          const latest=this.runs.find(r=>r.type==='analyze');
+          if (latest&&latest.status!=='running'){
+            clearInterval(t);this.analyzing=false;
             await this.loadCandidates();
-            this.flash(latest.status==='success'?'Scan complete':'Scan failed', latest.status!=='success');
+            this.flash(latest.status==='success'?'Scan complete':'Scan failed',latest.status!=='success');
           }
-        }, 3000);
-      } catch(e) { this.flash('Error: '+e.message,true); this.analyzing=false; }
+        },3000);
+      } catch(e){this.flash('Error: '+e.message,true);this.analyzing=false;}
     },
     async triggerUpgrade() {
       this.upgrading = true;
       try {
-        const fd = new FormData();
-        if (this.upgradeFile) fd.append('csv_file', this.upgradeFile);
-        fd.append('dry_run', this.upgradeDryRun?'true':'false');
-        fd.append('threshold', this.upgradeThreshold);
+        const fd=new FormData();
+        if (this.upgradeFile) fd.append('csv_file',this.upgradeFile);
+        fd.append('dry_run',this.upgradeDryRun?'true':'false');
+        fd.append('threshold',this.upgradeThreshold);
         await this.req('POST','/api/runs/upgrade',fd,true);
         this.flash('Upgrade started');
-        const t = setInterval(async () => {
+        const t=setInterval(async()=>{
           await this.loadRuns();
-          const latest = this.runs.find(r=>r.type==='upgrade');
-          if (latest && latest.status!=='running') {
-            clearInterval(t); this.upgrading=false;
-            this.upgradeRunId=latest.id; this.upgradeRunStatus=latest.status; this.upgradeLog=latest.log||'';
+          const latest=this.runs.find(r=>r.type==='upgrade');
+          if (latest&&latest.status!=='running'){
+            clearInterval(t);this.upgrading=false;
+            this.upgradeRunId=latest.id;this.upgradeRunStatus=latest.status;this.upgradeLog=latest.log||'';
           }
-        }, 2000);
-      } catch(e) { this.flash('Error: '+e.message,true); this.upgrading=false; }
-    },
-    async delCandidate(c) {
-      if (!confirm(`Delete "${c.title}" and remove its files from disk?\n\nThis will also add it to the ignore list.`)) return;
-      try {
-        await this.req('DELETE',`/api/candidates/${c.id}`);
-        this.candidates=this.candidates.filter(x=>x.id!==c.id);
-        this.flash(`Deleted: ${c.title}`);
-      } catch(e) { this.flash('Delete failed: '+e.message,true); }
+        },2000);
+      } catch(e){this.flash('Error: '+e.message,true);this.upgrading=false;}
     },
     async addSched() {
-      try {
-        await this.req('POST','/api/schedules',this.newSched);
-        await this.loadSchedules(); this.showNewSched=false; this.flash('Schedule saved');
-      } catch(e) { this.flash('Error: '+e.message,true); }
+      try{await this.req('POST','/api/schedules',this.newSched);await this.loadSchedules();this.showNewSched=false;this.flash('Schedule saved');}
+      catch(e){this.flash('Error: '+e.message,true);}
     },
     async toggleSched(s) {
-      try { await this.req('PUT',`/api/schedules/${s.id}`,{enabled:!s.enabled}); await this.loadSchedules(); }
-      catch(e) { this.flash('Error: '+e.message,true); }
+      try{await this.req('PUT',`/api/schedules/${s.id}`,{enabled:!s.enabled});await this.loadSchedules();}
+      catch(e){this.flash('Error: '+e.message,true);}
     },
     async delSched(id) {
       if (!confirm('Remove this schedule?')) return;
-      try { await this.req('DELETE',`/api/schedules/${id}`); await this.loadSchedules(); this.flash('Schedule removed'); }
-      catch(e) { this.flash('Error: '+e.message,true); }
+      try{await this.req('DELETE',`/api/schedules/${id}`);await this.loadSchedules();this.flash('Schedule removed');}
+      catch(e){this.flash('Error: '+e.message,true);}
     },
     async saveConfig() {
-      try { await this.req('POST','/api/config',this.config); this.flash('Settings saved'); }
-      catch(e) { this.flash('Error: '+e.message,true); }
+      try{await this.req('POST','/api/config',this.config);this.flash('Settings saved');}
+      catch(e){this.flash('Error: '+e.message,true);}
     },
-    get parsedSelRun() {
-      if (!this.selRun?.log) return null;
-      const lines = this.selRun.log.split('\n').filter(l => l.trim());
-      if (!lines.length) return null;
-      const stats = [], triggered = [], dryRun = [], unmatched = [], errors = [];
-      for (const line of lines) {
-        if (line.startsWith('Triggered: '))      triggered.push(line.slice(11));
-        else if (line.startsWith('[DRY-RUN] '))   dryRun.push(line.slice(10));
-        else if (line.startsWith('No match: '))   unmatched.push(line.slice(10));
-        else if (/^Error /.test(line))            errors.push(line.slice(6));
-        else                                      stats.push(line);
-      }
-      return { stats, triggered, dryRun, unmatched, errors };
-    },
-    analyzeSummary(r) {
-      try {
-        const o = typeof r.summary === 'string' ? JSON.parse(r.summary) : (r.summary || {});
-        return { scanned: o.scanned ?? '—', candidates: o.candidates ?? '—' };
-      } catch { return { scanned: '—', candidates: '—' }; }
-    },
-    fmt(iso) { return iso ? new Date(iso).toLocaleString() : ''; },
-    dur(r) {
+
+    // ── Formatters ─────────────────────────────────────────────────────────────
+    fmt(iso){return iso?new Date(iso).toLocaleString():'';},
+    dur(r){
       if (!r.finished_at) return r.status==='running'?'running…':'—';
       const ms=new Date(r.finished_at)-new Date(r.started_at);
       return ms<60000?(ms/1000).toFixed(0)+'s':(ms/60000).toFixed(1)+'m';
     },
-    statusCls(s) {
+    statusCls(s){
       return {running:'bg-blue-900/60 text-blue-300',success:'bg-emerald-900/60 text-emerald-300',error:'bg-red-900/60 text-red-300'}[s]||'bg-gray-700 text-gray-300';
     },
-    sumText(j) {
+    sumText(j){
       if (!j) return '';
-      try { const o=typeof j==='string'?JSON.parse(j):j; return Object.entries(o).map(([k,v])=>`${k}=${v}`).join('  '); }
-      catch { return j; }
+      try{const o=typeof j==='string'?JSON.parse(j):j;return Object.entries(o).map(([k,v])=>`${k}=${v}`).join('  ');}
+      catch{return j;}
     },
+    analyzeSummary(r){
+      try{const o=typeof r.summary==='string'?JSON.parse(r.summary):(r.summary||{});return{scanned:o.scanned??'—',candidates:o.candidates??'—'};}
+      catch{return{scanned:'—',candidates:'—'};}
+    },
+    qualityEntries(obj){return Object.entries(obj||{}).sort((a,b)=>b[1]-a[1]);},
   };
 }
 </script>

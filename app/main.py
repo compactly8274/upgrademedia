@@ -41,6 +41,8 @@ def _effective_config(overrides: dict = None) -> dict:
         "quality_threshold": settings.quality_threshold,
         "min_size_gb": settings.min_size_gb,
         "min_days_stale": settings.min_days_stale,
+        "webhook_url": settings.webhook_url,
+        "webhook_type": settings.webhook_type,
     }
     for row in rows:
         cfg[row["key"]] = row["value"]
@@ -227,6 +229,119 @@ def delete_library_series(series_id: int):
     except Exception as e:
         raise HTTPException(500, str(e))
     return {"ok": True}
+
+
+@app.post("/api/library/movies/{movie_id}/search")
+def search_library_movie(movie_id: int):
+    cfg = _effective_config()
+    if not cfg.get("radarr_api_key"):
+        raise HTTPException(400, "Radarr API key not configured")
+    try:
+        RadarrClient(cfg["radarr_url"], cfg["radarr_api_key"]).search(movie_id)
+    except Exception as e:
+        raise HTTPException(500, str(e))
+    return {"ok": True}
+
+
+@app.post("/api/library/series/{series_id}/search")
+def search_library_series(series_id: int):
+    cfg = _effective_config()
+    if not cfg.get("sonarr_api_key"):
+        raise HTTPException(400, "Sonarr API key not configured")
+    try:
+        SonarrClient(cfg["sonarr_url"], cfg["sonarr_api_key"]).search_series(series_id)
+    except Exception as e:
+        raise HTTPException(500, str(e))
+    return {"ok": True}
+
+
+@app.get("/api/library/wanted")
+def library_wanted():
+    cfg = _effective_config()
+    out = []
+    if cfg.get("radarr_api_key"):
+        try:
+            for m in RadarrClient(cfg["radarr_url"], cfg["radarr_api_key"]).movies():
+                if m.get("monitored") and not m.get("hasFile"):
+                    out.append({"id": m["id"], "type": "movie", "title": m.get("title", ""),
+                                "year": m.get("year"), "status": m.get("status", ""), "missing_episodes": None})
+        except Exception:
+            pass
+    if cfg.get("sonarr_api_key"):
+        try:
+            for s in SonarrClient(cfg["sonarr_url"], cfg["sonarr_api_key"]).series():
+                if not s.get("monitored"):
+                    continue
+                stats = s.get("statistics") or {}
+                missing = max(0, stats.get("totalEpisodeCount", 0) - stats.get("episodeFileCount", 0))
+                if missing > 0:
+                    out.append({"id": s["id"], "type": "series", "title": s.get("title", ""),
+                                "year": s.get("year"), "status": s.get("status", ""), "missing_episodes": missing})
+        except Exception:
+            pass
+    out.sort(key=lambda x: x.get("title", "").lower())
+    return out
+
+
+@app.get("/api/stats")
+def get_stats():
+    cfg = _effective_config()
+    result = {
+        "movies": {"count": 0, "size_gb": 0.0, "missing": 0, "by_quality": {}},
+        "series": {"count": 0, "size_gb": 0.0, "missing_episodes": 0, "by_status": {}},
+        "disk": [],
+    }
+    if cfg.get("radarr_api_key"):
+        try:
+            radarr = RadarrClient(cfg["radarr_url"], cfg["radarr_api_key"])
+            movies = radarr.movies()
+            result["movies"]["count"] = len(movies)
+            result["movies"]["missing"] = sum(1 for m in movies if m.get("monitored") and not m.get("hasFile"))
+            total = 0
+            by_q: dict = {}
+            for m in movies:
+                mf = m.get("movieFile") or {}
+                sz = mf.get("size", 0)
+                total += sz
+                label = (((mf.get("quality") or {}).get("quality") or {}).get("name")
+                         or ("No File" if not m.get("hasFile") else "Unknown"))
+                by_q[label] = by_q.get(label, 0) + sz
+            result["movies"]["size_gb"] = round(total / 1024 ** 3, 1)
+            result["movies"]["by_quality"] = {
+                k: round(v / 1024 ** 3, 1)
+                for k, v in sorted(by_q.items(), key=lambda x: -x[1])
+            }
+            try:
+                disk = radarr._get("/api/v3/diskspace")
+                result["disk"] = [
+                    {"path": d.get("path", ""),
+                     "free_gb": round(d.get("freeSpace", 0) / 1024 ** 3, 1),
+                     "total_gb": round(d.get("totalSpace", 0) / 1024 ** 3, 1)}
+                    for d in disk
+                ]
+            except Exception:
+                pass
+        except Exception as e:
+            result["movies"]["error"] = str(e)
+    if cfg.get("sonarr_api_key"):
+        try:
+            series_list = SonarrClient(cfg["sonarr_url"], cfg["sonarr_api_key"]).series()
+            result["series"]["count"] = len(series_list)
+            total = 0
+            missing_eps = 0
+            by_status: dict = {}
+            for s in series_list:
+                st = s.get("statistics") or {}
+                total += st.get("sizeOnDisk", 0)
+                missing_eps += max(0, st.get("totalEpisodeCount", 0) - st.get("episodeFileCount", 0))
+                status = s.get("status", "unknown")
+                by_status[status] = by_status.get(status, 0) + 1
+            result["series"]["size_gb"] = round(total / 1024 ** 3, 1)
+            result["series"]["missing_episodes"] = missing_eps
+            result["series"]["by_status"] = by_status
+        except Exception as e:
+            result["series"]["error"] = str(e)
+    return result
 
 
 # ---------------------------------------------------------------------------

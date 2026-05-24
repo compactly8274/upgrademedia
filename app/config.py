@@ -12,5 +12,7 @@ class Settings:
         self.quality_threshold = float(os.getenv("QUALITY_THRESHOLD", "60"))
         self.min_size_gb = float(os.getenv("MIN_SIZE_GB", "0.5"))
         self.min_days_stale = int(os.getenv("MIN_DAYS_STALE", "90"))
+        self.webhook_url = os.getenv("WEBHOOK_URL", "")
+        self.webhook_type = os.getenv("WEBHOOK_TYPE", "discord")
 
 settings = Settings()
