@@ -17,5 +17,7 @@ class Settings:
         self.media_paths = os.getenv("MEDIA_PATHS", "")
         self.search_delay = int(os.getenv("SEARCH_DELAY", "30"))
         self.search_limit = int(os.getenv("SEARCH_LIMIT", "100"))
+        self.search_cooldown_days = int(os.getenv("SEARCH_COOLDOWN_DAYS", "7"))
+        self.search_batch_gap = int(os.getenv("SEARCH_BATCH_GAP", "0"))
 
 settings = Settings()

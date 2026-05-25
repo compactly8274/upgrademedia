@@ -18,7 +18,7 @@
 <!-- Desktop header -->
 <header class="bg-gray-800 border-b border-gray-700 px-4 py-2 hidden sm:flex items-center gap-4 sticky top-0 z-10">
   <span class="text-blue-400 font-bold text-base tracking-tight shrink-0">Media Manager</span>
-  <nav class="flex gap-1 overflow-x-auto scrollbar-none">
+  <nav class="flex gap-1 overflow-x-auto scrollbar-none flex-1 min-w-0">
     <template x-for="t in tabs" :key="t">
       <button @click="setTab(t)"
         :class="activeTab===t ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700/50'"
@@ -26,12 +26,59 @@
         x-text="t"></button>
     </template>
   </nav>
+  <!-- Jobs indicator -->
+  <div x-show="activeJobs.length > 0 || pendingBatch" x-cloak class="relative shrink-0">
+    <button @click="jobsOpen=!jobsOpen"
+      class="flex items-center gap-2 bg-gray-700/80 hover:bg-gray-600 px-3 py-1.5 rounded-lg text-xs transition-colors whitespace-nowrap">
+      <span class="w-2 h-2 rounded-full bg-blue-400 animate-pulse shrink-0"></span>
+      <span x-text="activeJobs.length ? activeJobs.length+' job'+(activeJobs.length>1?'s':'')+' running' : 'next batch queued'"></span>
+    </button>
+    <div x-show="jobsOpen" @click.outside="jobsOpen=false" x-cloak
+      class="absolute right-0 top-full mt-1 w-80 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl z-50 overflow-hidden">
+      <div class="p-3 space-y-3 max-h-96 overflow-y-auto">
+        <template x-for="job in activeJobs" :key="job.id">
+          <div class="space-y-1.5">
+            <div class="flex justify-between text-xs items-baseline">
+              <span class="font-medium text-white" x-text="job.typeLabel"></span>
+              <span class="text-gray-400 tabular-nums"
+                x-text="(job.pct !== null ? job.pct+'%' : '…') + (job.eta ? ' · '+job.eta+' left' : '')"></span>
+            </div>
+            <div class="h-1 bg-gray-700 rounded-full overflow-hidden">
+              <div class="h-full rounded-full transition-all duration-500"
+                :class="job.pct !== null ? 'bg-blue-500' : 'bg-blue-500 animate-pulse'"
+                :style="job.pct !== null ? `width:${job.pct}%` : 'width:100%'"></div>
+            </div>
+            <div class="flex justify-between text-[10px] text-gray-500">
+              <span class="truncate max-w-[200px]" x-text="job.currentFile||''"></span>
+              <span class="tabular-nums shrink-0 ml-2" x-text="(job.summary?.done||0)+' / '+(job.summary?.total||'?')"></span>
+            </div>
+          </div>
+        </template>
+        <template x-if="pendingBatch">
+          <div class="pt-2 border-t border-gray-700 space-y-1">
+            <div class="flex justify-between text-xs">
+              <span class="text-amber-400 font-medium">Next batch queued</span>
+              <button @click="req('DELETE','/api/runs/pending').then(()=>{pendingBatch=null;jobsOpen=false})"
+                class="text-gray-500 hover:text-red-400 text-[10px]">cancel</button>
+            </div>
+            <div class="text-[10px] text-gray-500" x-text="pendingBatch.remaining+' files remaining'"></div>
+            <div x-show="pendingBatch.gap > 0" class="text-[10px] text-gray-500"
+              x-text="'Starts at: '+new Date(pendingBatch.scheduled_at).toLocaleTimeString()"></div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
 </header>
 
 <!-- Mobile top bar -->
 <header class="bg-gray-800 border-b border-gray-700 px-4 py-3 flex sm:hidden items-center justify-between sticky top-0 z-10">
   <span class="text-blue-400 font-bold text-base tracking-tight">Media Manager</span>
-  <span class="text-xs text-gray-400 capitalize" x-text="activeTab"></span>
+  <div class="flex items-center gap-2">
+    <span x-show="activeJobs.length > 0 || pendingBatch" x-cloak
+      class="w-2 h-2 rounded-full bg-blue-400 animate-pulse"></span>
+    <span class="text-xs text-gray-400 capitalize" x-text="activeTab"></span>
+  </div>
 </header>
 
 <!-- Mobile bottom tab bar -->
@@ -556,6 +603,10 @@
         <label x-show="scanTab==='files'" x-cloak class="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer shrink-0 select-none">
           <input type="checkbox" x-model="scanSeasonUpgrade">
           <span title="Groups TV episodes by season and triggers a SeasonSearch in Sonarr, falling back to series search if the season call fails">Season</span>
+        </label>
+        <label x-show="scanTab==='files'" x-cloak class="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer shrink-0 select-none">
+          <input type="checkbox" x-model="scanAutoContinue">
+          <span title="Automatically queue the next batch when this one finishes, until all eligible files are searched">Auto</span>
         </label>
         <button @click="triggerStripNonEnglish()" :disabled="stripping||scanning"
           x-show="scanTab==='files' && nonEnglishScanCount > 0" x-cloak
@@ -1091,6 +1142,7 @@
             <option value="analyze">Analyze</option>
             <option value="upgrade">Upgrade</option>
             <option value="scan">Scan</option>
+            <option value="search_all">Bulk Search</option>
           </select>
         </div>
         <div class="flex-1">
@@ -1155,6 +1207,9 @@ function app() {
     selRun: null,
     af: { gb: 0, days: 0, type: '' },
 
+    // Jobs notification
+    jobsOpen: false, pendingBatch: null,
+
     // Scanner
     scanFiles: [], scanDuplicates: [], scanStats: null,
     scanTab: 'files', scanLoading: false, scanning: false, stripping: false,
@@ -1163,7 +1218,7 @@ function app() {
     scanFiltersOpen: false,
     selectedScanFiles: {}, expandedScanFile: null,
     scanPage: 1, scanPageSize: 100,
-    serverSearchCount: null, scanForce: false,
+    serverSearchCount: null, scanForce: false, scanAutoContinue: false,
 
     // Library
     libraryTab: 'movies',
@@ -1199,10 +1254,14 @@ function app() {
       ]},
       {key:'media_paths',       label:'Media Paths (Scanner)',             type:'text',
        hint:'Comma-separated absolute paths to scan for video files, e.g. /movies,/tv — must match volume mounts in docker-compose.yml'},
-      {key:'search_delay',      label:'Bulk Search Delay (seconds)',       type:'number',
+      {key:'search_delay',         label:'Bulk Search Delay (seconds)',    type:'number',
        hint:'Seconds to wait between each Radarr/Sonarr search trigger. Increase to avoid tracker rate limiting (default: 30).'},
-      {key:'search_limit',      label:'Bulk Search Limit (per run)',       type:'number',
-       hint:'Max files to search per bulk run. Set to 0 for unlimited. Use with delay to pace requests like Houndarr (default: 100).'},
+      {key:'search_limit',         label:'Bulk Search Limit (per run)',    type:'number',
+       hint:'Max files to search per batch. Set to 0 for unlimited. Use with Auto-continue to process everything in paced batches (default: 100).'},
+      {key:'search_cooldown_days', label:'Search Cooldown (days)',         type:'number',
+       hint:'Skip files already searched within this many days. Prevents re-triggering the same searches on repeated runs (default: 7).'},
+      {key:'search_batch_gap',     label:'Batch Gap (seconds)',            type:'number',
+       hint:'Seconds to wait before starting the next auto-continue batch. 0 = start immediately after current batch finishes (default: 0).'},
     ],
 
     tabIcon(t) {
@@ -1271,6 +1330,31 @@ function app() {
     get searchAllMatchCount() { return this.serverSearchCount ?? this.filteredScanFiles.filter(f=>f.radarr_id||f.sonarr_id).length; },
     get nonEnglishScanCount() { return this.filteredScanFiles.filter(f=>f.non_english_audio>0||f.non_english_subs>0).length; },
     get paginatedScanFiles() { return this.filteredScanFiles.slice(0, this.scanPage * this.scanPageSize); },
+    get activeJobs() {
+      const now = Date.now();
+      const typeLabel = {scan:'Scan',strip:'Strip',analyze:'Analyze',upgrade:'Upgrade',search_all:'Bulk Search'};
+      const skipPrefixes = ['Found ','Rate ','Batch ','Scanning ','Skipping ','Done —','Auto-cont','Season sea'];
+      return this.runs.filter(r => r.status === 'running').map(r => {
+        let summary = {};
+        try { summary = typeof r.summary === 'string' ? JSON.parse(r.summary) : (r.summary || {}); } catch {}
+        const total = summary.total || 0, done = summary.done || 0;
+        const pct = total > 0 ? Math.round(done / total * 100) : null;
+        let currentFile = '';
+        if (r.log) {
+          const lines = r.log.trim().split('\n').filter(Boolean);
+          for (let i = lines.length - 1; i >= 0; i--) {
+            if (!skipPrefixes.some(p => lines[i].startsWith(p))) { currentFile = lines[i].slice(0,70); break; }
+          }
+        }
+        let eta = '';
+        if (pct !== null && pct > 0 && pct < 100 && done > 0) {
+          const elapsed = (now - new Date(r.started_at).getTime()) / 1000;
+          const secsLeft = (total - done) / (done / elapsed);
+          eta = secsLeft < 60 ? `~${Math.round(secsLeft)}s` : secsLeft < 3600 ? `~${Math.round(secsLeft/60)}m` : `~${(secsLeft/3600).toFixed(1)}h`;
+        }
+        return {...r, summary, pct, currentFile, eta, typeLabel: typeLabel[r.type] || r.type};
+      });
+    },
     get allScanSelected() {
       return this.filteredScanFiles.length > 0 && this.filteredScanFiles.every(f => this.selectedScanFiles[f.id]);
     },
@@ -1290,9 +1374,17 @@ function app() {
     // ── Init ──────────────────────────────────────────────────────────────────
     async init() {
       await Promise.all([this.loadRuns(),this.loadCandidates(),this.loadSchedules(),this.loadConfig()]);
-      this.loadStats(); this.loadScanStats();
-      // Guard against stacking the background runs poll across Alpine re-inits
-      if (!window._runsPoll) window._runsPoll = setInterval(()=>this.loadRuns(),15000);
+      this.loadStats(); this.loadScanStats(); this.loadPending();
+      // Adaptive polling: fast when jobs active, slow when idle
+      if (!window._runsPolling) {
+        window._runsPolling = true;
+        const poll = async () => {
+          await Promise.all([this.loadRuns(), this.loadPending()]);
+          const delay = (this.activeJobs.length > 0 || this.pendingBatch) ? 3000 : 30000;
+          window._runsPoll = setTimeout(poll, delay);
+        };
+        poll();
+      }
       this._resumeRunningJobs();
       // scanSearch is client-side only; score/codec/nonEnglish reload from server
       this.$watch('scanSearch', () => { this.scanPage = 1; });
@@ -1530,6 +1622,7 @@ function app() {
     },
     flash(msg,err=false){this.banner=msg;this.bannerErr=err;setTimeout(()=>this.banner='',5000);},
     async loadRuns()       {this.runs=await this.req('GET','/api/runs');},
+    async loadPending()    {try{this.pendingBatch=await this.req('GET','/api/runs/pending');}catch{}},
     async loadCandidates() {this.candidates=await this.req('GET','/api/candidates');},
     async loadSchedules()  {this.schedules=await this.req('GET','/api/schedules');},
     async loadConfig()     {this.config=await this.req('GET','/api/config');},
@@ -1727,6 +1820,10 @@ function app() {
       msg += `\nEstimated time: ~${estMins} min`;
       if (this.scanForce) msg += `\n\nForce mode: existing files will be deleted before searching.`;
       if (this.scanSeasonUpgrade) msg += `\n\nSeason mode: TV episodes grouped by season — one SeasonSearch per season (falls back to series search).`;
+      if (this.scanAutoContinue) {
+        const cooldown = parseInt(this.config.search_cooldown_days)||7;
+        msg += `\n\nAuto-continue: will keep queuing batches until all files searched (${cooldown}d cooldown between re-searches).`;
+      }
       if (!confirm(msg)) return;
       this.searchingAll = true;
       try {
@@ -1736,6 +1833,7 @@ function app() {
           non_english: this.scanNonEnglish || undefined,
           force: this.scanForce || undefined,
           season_upgrade: this.scanSeasonUpgrade || undefined,
+          auto_continue: this.scanAutoContinue || undefined,
         });
         this.flash(`Bulk search started for ${n} files`);
         if (window._searchAllPoll) clearInterval(window._searchAllPoll);

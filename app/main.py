@@ -48,6 +48,8 @@ def _effective_config(overrides: dict = None) -> dict:
         "media_paths": settings.media_paths,
         "search_delay": settings.search_delay,
         "search_limit": settings.search_limit,
+        "search_cooldown_days": settings.search_cooldown_days,
+        "search_batch_gap": settings.search_batch_gap,
     }
     for row in rows:
         cfg[row["key"]] = row["value"]
@@ -362,7 +364,7 @@ def list_schedules():
 
 @app.post("/api/schedules")
 def create_schedule(body: dict):
-    if body.get("job_type") not in ("analyze", "upgrade", "scan") or not body.get("cron"):
+    if body.get("job_type") not in ("analyze", "upgrade", "scan", "search_all") or not body.get("cron"):
         raise HTTPException(400, "job_type and cron required")
     with db() as conn:
         cur = conn.execute(
@@ -414,10 +416,24 @@ def trigger_scan(body: dict = {}):
 
 @app.post("/api/runs/search-all")
 def trigger_search_all(body: dict = {}):
-    filters = {k: body.get(k) for k in ("max_score", "codec", "non_english", "force", "season_upgrade")}
+    filters = {k: body.get(k) for k in ("max_score", "codec", "non_english", "force", "season_upgrade", "auto_continue")}
     params = _effective_config()
     threading.Thread(target=tasks.run_search_all, args=(params, filters), daemon=True).start()
     return {"queued": True}
+
+
+@app.get("/api/runs/pending")
+def get_pending():
+    p = tasks._pending_batch
+    if p and p.get("scheduled_at"):
+        return {"scheduled_at": p["scheduled_at"], "remaining": p.get("remaining", 0), "gap": p.get("gap", 0)}
+    return None
+
+
+@app.delete("/api/runs/pending")
+def cancel_pending():
+    tasks._cancel_pending()
+    return {"ok": True}
 
 
 @app.get("/api/scan/search-count")

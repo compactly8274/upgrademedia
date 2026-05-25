@@ -5,10 +5,11 @@ import logging
 import os
 import re
 import subprocess
+import threading
 import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
@@ -20,6 +21,16 @@ from app import scanner as sc
 
 log = logging.getLogger(__name__)
 NEVER = 99999
+
+# Pending auto-continue batch (set when auto_continue fires, cleared on new run or cancel)
+_pending_batch: dict = {}
+
+
+def _cancel_pending():
+    t = _pending_batch.get("timer")
+    if t:
+        t.cancel()
+    _pending_batch.clear()
 
 
 def _now() -> str:
@@ -61,6 +72,8 @@ def _effective_config(overrides: dict = None) -> dict:
         "media_paths": settings.media_paths,
         "search_delay": settings.search_delay,
         "search_limit": settings.search_limit,
+        "search_cooldown_days": settings.search_cooldown_days,
+        "search_batch_gap": settings.search_batch_gap,
     }
     for row in rows:
         cfg[row["key"]] = row["value"]
@@ -415,6 +428,7 @@ def _scan_progress(run_id: int, summary: dict, logs: list):
 # ---------------------------------------------------------------------------
 
 def run_search_all(params: dict, filters: dict):
+    _cancel_pending()
     run_id = _start_run("search_all", params)
     logs = []
     try:
@@ -425,12 +439,19 @@ def run_search_all(params: dict, filters: dict):
         non_english = filters.get("non_english")
         force = bool(filters.get("force", False))
         season_upgrade = bool(filters.get("season_upgrade", False))
+        auto_continue = bool(filters.get("auto_continue", False))
+        cooldown_days = int(params.get("search_cooldown_days", settings.search_cooldown_days))
+        batch_gap = int(params.get("search_batch_gap", settings.search_batch_gap))
         if max_score is not None:
             clauses.append("quality_score <= ?"); args.append(float(max_score))
         if codec:
             clauses.append("video_codec = ?"); args.append(str(codec))
         if non_english:
             clauses.append("(non_english_audio > 0 OR non_english_subs > 0)")
+        # Cooldown: skip files searched within N days (always enforced when auto_continue to avoid loops)
+        effective_cooldown = max(1, cooldown_days) if auto_continue else cooldown_days
+        if effective_cooldown > 0:
+            clauses.append(f"(last_searched_at IS NULL OR last_searched_at < datetime('now', '-{effective_cooldown} days'))")
 
         with db() as conn:
             files = [dict(r) for r in conn.execute(
@@ -442,25 +463,33 @@ def run_search_all(params: dict, filters: dict):
         if limit > 0:
             files = files[:limit]
 
-        logs.append(f"Found {len(files)} linked file(s) matching filters (delay={delay}s, force={force}, season_upgrade={season_upgrade})")
+        cooldown_label = f", cooldown={effective_cooldown}d" if effective_cooldown > 0 else ""
+        logs.append(f"Found {len(files)} file(s) to process (delay={delay}s, force={force}, season_upgrade={season_upgrade}{cooldown_label})")
         if limit > 0:
-            logs.append(f"Rate limit: {limit} files per run, {delay}s between each")
+            logs.append(f"Batch limit: {limit} files per run, {delay}s between each")
         _scan_progress(run_id, {"total": len(files), "triggered": 0, "skipped": 0, "errors": 0, "done": 0}, logs)
 
         radarr = RadarrClient(str(params["radarr_url"]), str(params["radarr_api_key"])) if params.get("radarr_api_key") else None
         sonarr = SonarrClient(str(params["sonarr_url"]), str(params["sonarr_api_key"])) if params.get("sonarr_api_key") else None
         triggered = skipped = errors = 0
+        now = _now()
+
+        def _mark_searched(file_ids: list):
+            if not file_ids:
+                return
+            with db() as conn:
+                conn.executemany(
+                    "UPDATE scan_files SET last_searched_at=? WHERE id=?",
+                    [(now, fid) for fid in file_ids]
+                )
 
         if season_upgrade and sonarr:
-            # Split files by type
             radarr_files = [f for f in files if f.get("radarr_id") and not f.get("sonarr_id")]
             sonarr_files = [f for f in files if f.get("sonarr_id")]
             other_files = [f for f in files if not f.get("radarr_id") and not f.get("sonarr_id")]
 
-            # Group sonarr files: by (sonarr_id, season_number) when season is known,
-            # or deduplicated by sonarr_id when season is unknown
-            season_groups = {}   # (sid, sn) -> [files]
-            no_season = {}       # sid -> one representative file
+            season_groups = {}
+            no_season = {}
             for f in sonarr_files:
                 sn = f.get("season_number")
                 sid = int(f["sonarr_id"])
@@ -469,7 +498,6 @@ def run_search_all(params: dict, filters: dict):
                 else:
                     no_season[sid] = f
 
-            # Build ordered work list: radarr files first, then season groups, then no-season series
             work = (
                 [('radarr', f) for f in radarr_files]
                 + [('season', (key, grp)) for key, grp in season_groups.items()]
@@ -490,6 +518,7 @@ def run_search_all(params: dict, filters: dict):
                                 radarr.delete_file(int(mf["id"]))
                                 logs.append(f"Deleted file: {f['filename']}")
                         radarr.search(int(f["radarr_id"]))
+                        _mark_searched([f["id"]])
                         triggered += 1; ok = True
                     except Exception as e:
                         errors += 1; logs.append(f"Error {f['filename']}: {e}")
@@ -498,12 +527,13 @@ def run_search_all(params: dict, filters: dict):
                     (sid, sn), grp = item
                     try:
                         sonarr.search_season(sid, sn)
+                        _mark_searched([f["id"] for f in grp])
                         triggered += 1; ok = True
                         logs.append(f"Season search: series_id={sid} season={sn} ({len(grp)} file(s))")
                     except Exception as e:
-                        # Fall back to series search for this series
                         try:
                             sonarr.search_series(sid)
+                            _mark_searched([f["id"] for f in grp])
                             triggered += 1; ok = True
                             logs.append(f"Season fallback→series: series_id={sid} season={sn} ({e})")
                         except Exception as e2:
@@ -514,6 +544,7 @@ def run_search_all(params: dict, filters: dict):
                     f = item
                     try:
                         sonarr.search_series(int(f["sonarr_id"]))
+                        _mark_searched([f["id"]])
                         triggered += 1; ok = True
                     except Exception as e:
                         errors += 1; logs.append(f"Error {f['filename']}: {e}")
@@ -541,12 +572,14 @@ def run_search_all(params: dict, filters: dict):
                                 radarr.delete_file(int(mf["id"]))
                                 logs.append(f"Deleted file: {f['filename']}")
                         radarr.search(int(f["radarr_id"]))
+                        _mark_searched([f["id"]])
                         triggered += 1; ok = True
                     except Exception as e:
                         errors += 1; logs.append(f"Error {f['filename']}: {e}")
                 elif f.get("sonarr_id") and sonarr:
                     try:
                         sonarr.search_series(int(f["sonarr_id"]))
+                        _mark_searched([f["id"]])
                         triggered += 1; ok = True
                     except Exception as e:
                         errors += 1; logs.append(f"Error {f['filename']}: {e}")
@@ -562,6 +595,25 @@ def run_search_all(params: dict, filters: dict):
 
         summary = {"total": len(files), "triggered": triggered, "skipped": skipped, "errors": errors}
         logs.append(f"Done — triggered {triggered}, skipped {skipped} (unlinked), errors {errors}")
+
+        # Auto-continue: schedule next batch if more files remain
+        if auto_continue and triggered > 0:
+            with db() as conn:
+                remaining = conn.execute(
+                    f"SELECT COUNT(*) FROM scan_files WHERE {' AND '.join(clauses)}", args
+                ).fetchone()[0]
+            if remaining > 0:
+                gap_label = f"in {batch_gap // 60}m {batch_gap % 60}s" if batch_gap else "immediately"
+                logs.append(f"Auto-continue: {remaining} file(s) remain, next batch {gap_label}")
+                summary["auto_continue_remaining"] = remaining
+                t = threading.Timer(batch_gap, run_search_all, args=(params, filters))
+                t.daemon = True
+                t.start()
+                scheduled_at = (datetime.now(timezone.utc) + timedelta(seconds=batch_gap)).isoformat()
+                _pending_batch.update(timer=t, scheduled_at=scheduled_at, remaining=remaining, gap=batch_gap)
+            else:
+                logs.append("Auto-continue: all files searched, no more batches needed")
+
         _finish_run(run_id, "success", summary, "\n".join(logs))
         _notify(params, "Media Manager — Bulk Search complete",
                 f"Triggered {triggered} upgrade searches.")
