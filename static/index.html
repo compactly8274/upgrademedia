@@ -638,77 +638,77 @@
               <th class="text-left px-3 py-2 w-20">Flags</th>
               <th class="px-3 py-2 w-20"></th>
             </tr></thead>
-            <tbody>
-              <template x-for="f in paginatedScanFiles" :key="f.id">
-                <template>
-                  <tr class="border-b border-gray-700/50 hover:bg-gray-700/20 cursor-pointer"
-                    :class="selectedScanFiles[f.id]?'bg-blue-900/20':''"
-                    @click.self="expandedScanFile=expandedScanFile===f.id?null:f.id">
-                    <td class="px-3 py-2" @click.stop>
-                      <input type="checkbox" :checked="selectedScanFiles[f.id]"
-                        @change="selectedScanFiles={...selectedScanFiles,[f.id]:$event.target.checked}">
-                    </td>
-                    <td class="px-3 py-2 max-w-[260px]" @click="expandedScanFile=expandedScanFile===f.id?null:f.id">
-                      <div class="font-medium text-xs leading-tight truncate" x-text="f.filename" :title="f.path"></div>
-                      <div class="text-[10px] text-gray-500 truncate" x-text="f.hdr_type||''"></div>
-                    </td>
-                    <td class="px-3 py-2 text-xs text-gray-300" x-text="resolution(f)"></td>
-                    <td class="px-3 py-2 text-xs font-mono text-gray-300 uppercase" x-text="f.video_codec||'—'"></td>
-                    <td class="px-3 py-2 text-right text-xs tabular-nums text-gray-400"
-                      x-text="f.size_bytes ? (f.size_bytes/1073741824).toFixed(1)+' GB' : '—'"></td>
-                    <td class="px-3 py-2 text-right">
-                      <span class="text-sm font-bold tabular-nums" :class="scoreColor(f.quality_score)" x-text="f.quality_score??'—'"></span>
-                    </td>
-                    <td class="px-3 py-2 text-xs">
-                      <span x-show="f.non_english_audio>0" class="text-purple-400 mr-1" title="Non-English audio">🌐A</span>
-                      <span x-show="f.non_english_subs>0" class="text-purple-400" title="Non-English subtitles">🌐S</span>
-                      <span x-show="f.stripped_at" class="text-emerald-500" title="Streams stripped">✓</span>
-                    </td>
-                    <td class="px-3 py-2 text-right" @click.stop>
-                      <div class="flex justify-end gap-1">
-                        <button x-show="f.radarr_id||f.sonarr_id" @click="searchScanFile(f)"
-                          class="bg-blue-800 hover:bg-blue-700 px-2 py-1 rounded text-xs">↑</button>
-                        <button @click="deleteScanEntry(f)"
-                          class="bg-gray-700 hover:bg-red-800 px-2 py-1 rounded text-xs">✕</button>
-                      </div>
-                    </td>
-                  </tr>
-                  <!-- Expanded breakdown -->
-                  <tr x-show="expandedScanFile===f.id" class="bg-gray-900/60 border-b border-gray-700/30">
-                    <td colspan="8" class="px-5 py-4">
-                      <div class="grid sm:grid-cols-2 gap-4">
-                        <!-- Score breakdown bars -->
-                        <div>
-                          <div class="text-xs text-gray-400 font-semibold mb-2">Score Breakdown</div>
-                          <template x-for="[k, v] in breakdown(f)" :key="k">
-                            <div class="mb-2">
-                              <div class="flex justify-between text-xs text-gray-400 mb-0.5">
-                                <span class="capitalize" x-text="k.replace('_',' ')"></span>
-                                <span x-text="v"></span>
-                              </div>
-                              <div class="h-1.5 bg-gray-700 rounded-full overflow-hidden">
-                                <div class="h-full rounded-full transition-all" :class="scoreBg(v)" :style="`width:${v}%`"></div>
-                              </div>
+            <template x-for="f in paginatedScanFiles" :key="f.id">
+              <tbody>
+                <tr class="border-b border-gray-700/50 hover:bg-gray-700/20 cursor-pointer"
+                  :class="selectedScanFiles[f.id]?'bg-blue-900/20':''"
+                  @click="expandedScanFile=expandedScanFile===f.id?null:f.id">
+                  <td class="px-3 py-2" @click.stop>
+                    <input type="checkbox" :checked="selectedScanFiles[f.id]"
+                      @change="selectedScanFiles={...selectedScanFiles,[f.id]:$event.target.checked}">
+                  </td>
+                  <td class="px-3 py-2 max-w-[260px]">
+                    <div class="font-medium text-xs leading-tight truncate" x-text="f.filename" :title="f.path"></div>
+                    <div class="text-[10px] text-gray-500 truncate" x-text="f.hdr_type||''"></div>
+                  </td>
+                  <td class="px-3 py-2 text-xs text-gray-300" x-text="resolution(f)"></td>
+                  <td class="px-3 py-2 text-xs font-mono text-gray-300 uppercase" x-text="f.video_codec||'—'"></td>
+                  <td class="px-3 py-2 text-right text-xs tabular-nums text-gray-400"
+                    x-text="f.size_bytes ? (f.size_bytes/1073741824).toFixed(1)+' GB' : '—'"></td>
+                  <td class="px-3 py-2 text-right">
+                    <span class="text-sm font-bold tabular-nums" :class="scoreColor(f.quality_score)" x-text="f.quality_score??'—'"></span>
+                  </td>
+                  <td class="px-3 py-2 text-xs">
+                    <span x-show="f.non_english_audio>0" class="text-purple-400 mr-1" title="Non-English audio">🌐A</span>
+                    <span x-show="f.non_english_subs>0" class="text-purple-400" title="Non-English subtitles">🌐S</span>
+                    <span x-show="f.stripped_at" class="text-emerald-500" title="Streams stripped">✓</span>
+                  </td>
+                  <td class="px-3 py-2 text-right" @click.stop>
+                    <div class="flex justify-end gap-1">
+                      <button x-show="f.radarr_id||f.sonarr_id" @click="searchScanFile(f)"
+                        class="bg-blue-800 hover:bg-blue-700 px-2 py-1 rounded text-xs">↑</button>
+                      <button @click="deleteScanEntry(f)"
+                        class="bg-gray-700 hover:bg-red-800 px-2 py-1 rounded text-xs">✕</button>
+                    </div>
+                  </td>
+                </tr>
+                <!-- Expanded breakdown -->
+                <tr x-show="expandedScanFile===f.id" class="bg-gray-900/60 border-b border-gray-700/30">
+                  <td colspan="8" class="px-5 py-4">
+                    <div class="grid sm:grid-cols-2 gap-4">
+                      <!-- Score breakdown bars -->
+                      <div>
+                        <div class="text-xs text-gray-400 font-semibold mb-2">Score Breakdown</div>
+                        <template x-for="[k, v] in breakdown(f)" :key="k">
+                          <div class="mb-2">
+                            <div class="flex justify-between text-xs text-gray-400 mb-0.5">
+                              <span class="capitalize" x-text="k.replace('_',' ')"></span>
+                              <span x-text="v"></span>
                             </div>
-                          </template>
-                        </div>
-                        <!-- File details -->
-                        <div class="text-xs space-y-1 text-gray-400">
-                          <div><span class="text-gray-500">Path:</span> <span class="font-mono break-all" x-text="f.path"></span></div>
-                          <div><span class="text-gray-500">Duration:</span> <span x-text="f.duration_seconds ? Math.round(f.duration_seconds/60)+' min' : '—'"></span></div>
-                          <div><span class="text-gray-500">Video:</span> <span x-text="(f.video_codec||'').toUpperCase()+' '+resolution(f)+(f.hdr_type?' · '+f.hdr_type:'')"></span></div>
-                          <div><span class="text-gray-500">Audio:</span> <span x-text="(f.audio_codec||'').toUpperCase()+' '+f.audio_channels+'ch'"></span></div>
-                          <div><span class="text-gray-500">Audio langs:</span> <span x-text="f.audio_langs ? JSON.parse(f.audio_langs).join(', ')||'—' : '—'"></span></div>
-                          <div><span class="text-gray-500">Sub langs:</span> <span x-text="f.sub_langs ? JSON.parse(f.sub_langs).join(', ')||'—' : '—'"></span></div>
-                          <div><span class="text-gray-500">Hash:</span> <span class="font-mono" x-text="f.file_hash||'—'"></span></div>
-                          <div><span class="text-gray-500">Scanned:</span> <span x-text="fmt(f.scanned_at)"></span></div>
-                          <div x-show="f.stripped_at"><span class="text-gray-500">Stripped:</span> <span class="text-emerald-400" x-text="fmt(f.stripped_at)"></span></div>
-                        </div>
+                            <div class="h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                              <div class="h-full rounded-full transition-all" :class="scoreBg(v)" :style="`width:${v}%`"></div>
+                            </div>
+                          </div>
+                        </template>
                       </div>
-                    </td>
-                  </tr>
-                </template>
-              </template>
+                      <!-- File details -->
+                      <div class="text-xs space-y-1 text-gray-400">
+                        <div><span class="text-gray-500">Path:</span> <span class="font-mono break-all" x-text="f.path"></span></div>
+                        <div><span class="text-gray-500">Duration:</span> <span x-text="f.duration_seconds ? Math.round(f.duration_seconds/60)+' min' : '—'"></span></div>
+                        <div><span class="text-gray-500">Video:</span> <span x-text="(f.video_codec||'').toUpperCase()+' '+resolution(f)+(f.hdr_type?' · '+f.hdr_type:'')"></span></div>
+                        <div><span class="text-gray-500">Audio:</span> <span x-text="(f.audio_codec||'').toUpperCase()+' '+f.audio_channels+'ch'"></span></div>
+                        <div><span class="text-gray-500">Audio langs:</span> <span x-text="f.audio_langs ? JSON.parse(f.audio_langs).join(', ')||'—' : '—'"></span></div>
+                        <div><span class="text-gray-500">Sub langs:</span> <span x-text="f.sub_langs ? JSON.parse(f.sub_langs).join(', ')||'—' : '—'"></span></div>
+                        <div><span class="text-gray-500">Hash:</span> <span class="font-mono" x-text="f.file_hash||'—'"></span></div>
+                        <div><span class="text-gray-500">Scanned:</span> <span x-text="fmt(f.scanned_at)"></span></div>
+                        <div x-show="f.stripped_at"><span class="text-gray-500">Stripped:</span> <span class="text-emerald-400" x-text="fmt(f.stripped_at)"></span></div>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </template>
+            <tbody>
               <tr x-show="!filteredScanFiles.length && !scanLoading">
                 <td colspan="8" class="px-4 py-10 text-center text-gray-500">
                   <span x-show="!scanFiles.length">No scan data — click Scan Now to analyse your media files.</span>
