@@ -8,7 +8,7 @@ class Settings:
         self.sonarr_api_key = os.getenv("SONARR_API_KEY", "")
         self.plex_url = os.getenv("PLEX_URL", "http://192.168.1.x:32400")
         self.plex_token = os.getenv("PLEX_TOKEN", "")
-        self.db_path = os.getenv("DB_PATH", "/data/medialyze.db")
+        self.db_path = os.getenv("DB_PATH", "/data/mediamanager.db")
         self.quality_threshold = float(os.getenv("QUALITY_THRESHOLD", "60"))
         self.min_size_gb = float(os.getenv("MIN_SIZE_GB", "0.5"))
         self.min_days_stale = int(os.getenv("MIN_DAYS_STALE", "90"))
