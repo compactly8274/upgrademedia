@@ -617,11 +617,24 @@ def run_scan(params: dict = None):
                         "skipped": skipped, "errors": errors, "done": done,
                     }, logs)
 
-        summary = {"total": len(files), "scanned": scanned, "skipped": skipped, "errors": errors}
-        logs.append(f"Done — scanned {scanned}, skipped {skipped} (unchanged), errors {errors}")
+        # Remove DB records for files that no longer exist on disk
+        removed = 0
+        if files:
+            scanned_paths = set(files)
+            with db() as conn:
+                all_db_paths = [row[0] for row in conn.execute("SELECT path FROM scan_files").fetchall()]
+            stale = [p for p in all_db_paths if p not in scanned_paths]
+            if stale:
+                with db() as conn:
+                    conn.executemany("DELETE FROM scan_files WHERE path=?", [(p,) for p in stale])
+                removed = len(stale)
+                logs.append(f"Removed {removed} record(s) for files no longer on disk")
+
+        summary = {"total": len(files), "scanned": scanned, "skipped": skipped, "removed": removed, "errors": errors}
+        logs.append(f"Done — scanned {scanned}, skipped {skipped} (unchanged), {removed} removed, {errors} errors")
         _finish_run(run_id, "success", summary, "\n".join(logs))
         _notify(params, "Media Manager — Scan complete",
-                f"Scanned {scanned} files, {skipped} unchanged, {errors} errors.")
+                f"Scanned {scanned} files, {skipped} unchanged, {removed} removed, {errors} errors.")
     except Exception as exc:
         log.exception("Scan task failed")
         _finish_run(run_id, "error", {}, str(exc))
