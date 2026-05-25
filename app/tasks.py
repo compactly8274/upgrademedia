@@ -396,6 +396,75 @@ def _scan_progress(run_id: int, summary: dict, logs: list):
 
 
 # ---------------------------------------------------------------------------
+# Bulk search (trigger Radarr/Sonarr for filtered scan results)
+# ---------------------------------------------------------------------------
+
+def run_search_all(params: dict, filters: dict):
+    run_id = _start_run("search_all", params)
+    logs = []
+    try:
+        clauses = ["(radarr_id IS NOT NULL OR sonarr_id IS NOT NULL)"]
+        args = []
+        max_score = filters.get("max_score")
+        codec = filters.get("codec")
+        non_english = filters.get("non_english")
+        if max_score is not None:
+            clauses.append("quality_score <= ?"); args.append(float(max_score))
+        if codec:
+            clauses.append("video_codec = ?"); args.append(str(codec))
+        if non_english:
+            clauses.append("(non_english_audio > 0 OR non_english_subs > 0)")
+
+        with db() as conn:
+            files = [dict(r) for r in conn.execute(
+                f"SELECT * FROM scan_files WHERE {' AND '.join(clauses)}", args
+            ).fetchall()]
+
+        logs.append(f"Found {len(files)} linked file(s) matching filters")
+        _scan_progress(run_id, {"total": len(files), "triggered": 0, "skipped": 0, "errors": 0, "done": 0}, logs)
+
+        radarr = RadarrClient(str(params["radarr_url"]), str(params["radarr_api_key"])) if params.get("radarr_api_key") else None
+        sonarr = SonarrClient(str(params["sonarr_url"]), str(params["sonarr_api_key"])) if params.get("sonarr_api_key") else None
+        delay = float(params.get("delay", 0.5))
+        triggered = skipped = errors = 0
+
+        for i, f in enumerate(files):
+            ok = False
+            if f.get("radarr_id") and radarr:
+                try:
+                    radarr.search(int(f["radarr_id"]))
+                    triggered += 1; ok = True
+                except Exception as e:
+                    errors += 1; logs.append(f"Error {f['filename']}: {e}")
+            elif f.get("sonarr_id") and sonarr:
+                try:
+                    sonarr.search_series(int(f["sonarr_id"]))
+                    triggered += 1; ok = True
+                except Exception as e:
+                    errors += 1; logs.append(f"Error {f['filename']}: {e}")
+            else:
+                skipped += 1
+            if ok and delay:
+                time.sleep(delay)
+            if (i + 1) % 20 == 0 or i == len(files) - 1:
+                _scan_progress(run_id, {
+                    "total": len(files), "triggered": triggered,
+                    "skipped": skipped, "errors": errors, "done": i + 1,
+                }, logs)
+
+        summary = {"total": len(files), "triggered": triggered, "skipped": skipped, "errors": errors}
+        logs.append(f"Done — triggered {triggered}, skipped {skipped} (unlinked), errors {errors}")
+        _finish_run(run_id, "success", summary, "\n".join(logs))
+        _notify(params, "Media Manager — Bulk Search complete",
+                f"Triggered {triggered} upgrade searches.")
+    except Exception as exc:
+        log.exception("search_all task failed")
+        _finish_run(run_id, "error", {}, str(exc))
+        _notify(params, "Media Manager — Bulk Search failed", str(exc))
+    return run_id
+
+
+# ---------------------------------------------------------------------------
 # Scan
 # ---------------------------------------------------------------------------
 

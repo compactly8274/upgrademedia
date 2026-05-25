@@ -138,6 +138,35 @@
       </div>
     </div>
 
+    <!-- Scan health -->
+    <template x-if="scanStats && scanStats.total_files > 0">
+      <div class="bg-gray-800 rounded-xl p-4 border border-gray-700 mb-4">
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-sm font-medium">Scan Health</span>
+          <button @click="setTab('scan')" class="text-xs text-blue-400 hover:text-blue-300">View →</button>
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+          <div>
+            <div class="text-xl font-bold text-red-400" x-text="scanStats.below_threshold_count??'—'"></div>
+            <div class="text-[10px] text-gray-400 mt-0.5" x-text="'Below ≤'+(scanStats.threshold??60)"></div>
+          </div>
+          <div>
+            <div class="text-xl font-bold text-purple-400" x-text="scanStats.has_non_english??'—'"></div>
+            <div class="text-[10px] text-gray-400 mt-0.5">Non-English</div>
+          </div>
+          <div>
+            <div class="text-xl font-bold text-amber-400" x-text="scanStats.duplicate_groups??'—'"></div>
+            <div class="text-[10px] text-gray-400 mt-0.5">Dup groups</div>
+          </div>
+          <div>
+            <div class="text-xl font-bold text-emerald-400"
+              x-text="scanStats.duplicate_savings_bytes ? (scanStats.duplicate_savings_bytes/1073741824).toFixed(1)+' GB' : '—'"></div>
+            <div class="text-[10px] text-gray-400 mt-0.5">Dup savings</div>
+          </div>
+        </div>
+      </div>
+    </template>
+
     <!-- Recent runs -->
     <h3 class="text-sm font-medium text-gray-400 mb-2">Recent Runs</h3>
     <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
@@ -519,10 +548,17 @@
           </div>
         </template>
       </div>
-      <button @click="triggerScan()" :disabled="scanning||stripping"
-        class="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 px-3 py-2 rounded-lg text-sm font-medium transition-colors shrink-0">
-        <span x-text="scanning ? 'Scanning…' : 'Scan Now'"></span>
-      </button>
+      <div class="flex gap-2">
+        <button @click="triggerSearchAll()" :disabled="searchingAll||scanning||!searchAllMatchCount"
+          class="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 px-3 py-2 rounded-lg text-sm font-medium transition-colors shrink-0"
+          x-show="scanTab==='files'" x-cloak>
+          <span x-text="searchingAll ? 'Searching…' : 'Search All ('+searchAllMatchCount+')'"></span>
+        </button>
+        <button @click="triggerScan()" :disabled="scanning||stripping"
+          class="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 px-3 py-2 rounded-lg text-sm font-medium transition-colors shrink-0">
+          <span x-text="scanning ? 'Scanning…' : 'Scan Now'"></span>
+        </button>
+      </div>
     </div>
 
     <!-- Sub-tabs -->
@@ -684,22 +720,45 @@
     <!-- ── DUPLICATES ── -->
     <div x-show="scanTab==='duplicates'">
       <div x-show="!scanDuplicates.length" class="text-center py-10 text-gray-500 text-sm">No duplicate files detected.</div>
-      <template x-for="(group, i) in dupGroups(scanDuplicates)" :key="i">
-        <div class="bg-gray-800 rounded-xl border border-gray-700 mb-3 overflow-hidden">
-          <div class="px-4 py-2 bg-gray-700/40 border-b border-gray-700 flex items-center gap-3">
-            <span class="text-xs text-amber-400 font-semibold">Duplicate group</span>
-            <span class="text-xs text-gray-400 font-mono" x-text="group[0].file_hash"></span>
-            <span class="text-xs text-gray-500" x-text="group.length + ' files'"></span>
+      <template x-if="scanDuplicates.length">
+        <div>
+          <!-- Resolve all bar -->
+          <div class="flex items-center justify-between mb-3 bg-amber-900/20 border border-amber-700/40 rounded-lg px-4 py-2">
+            <div class="text-sm text-amber-300">
+              <span x-text="dupGroups(scanDuplicates).length + ' duplicate group(s)'"></span>
+              <span x-show="scanStats?.duplicate_savings_bytes" class="text-amber-400 ml-2"
+                x-text="'· save ~'+(scanStats.duplicate_savings_bytes/1073741824).toFixed(1)+' GB'"></span>
+            </div>
+            <button @click="resolveAllDuplicates()" :disabled="resolvingDups"
+              class="bg-amber-700 hover:bg-amber-600 disabled:opacity-40 px-3 py-1 rounded text-xs font-medium shrink-0">
+              <span x-text="resolvingDups ? 'Resolving…' : 'Resolve All'"></span>
+            </button>
           </div>
-          <template x-for="f in group" :key="f.id">
-            <div class="px-4 py-3 border-b border-gray-700/30 last:border-0 flex items-center gap-3">
-              <div class="flex-1 min-w-0">
-                <div class="text-sm font-medium truncate" x-text="f.filename"></div>
-                <div class="text-xs text-gray-500 truncate font-mono" x-text="f.path"></div>
+          <template x-for="(group, i) in dupGroups(scanDuplicates)" :key="i">
+            <div class="bg-gray-800 rounded-xl border border-gray-700 mb-3 overflow-hidden">
+              <div class="px-4 py-2 bg-gray-700/40 border-b border-gray-700 flex items-center gap-2 flex-wrap">
+                <span class="text-xs text-amber-400 font-semibold">Duplicate group</span>
+                <span class="text-xs text-gray-500 font-mono" x-text="group[0].file_hash"></span>
+                <span class="text-xs text-gray-500 ml-auto"
+                  x-text="group.reduce((s,f)=>s+(f.size_bytes||0),0) ? (group.reduce((s,f)=>s+(f.size_bytes||0),0)/1073741824).toFixed(1)+' GB total' : ''">
+                </span>
               </div>
-              <span class="text-xs tabular-nums text-gray-400 shrink-0"
-                x-text="f.size_bytes ? (f.size_bytes/1073741824).toFixed(1)+' GB' : '—'"></span>
-              <span class="text-sm font-bold tabular-nums shrink-0" :class="scoreColor(f.quality_score)" x-text="f.quality_score??'—'"></span>
+              <template x-for="(f, fi) in group" :key="f.id">
+                <div class="px-4 py-3 border-b border-gray-700/30 last:border-0 flex items-center gap-3"
+                  :class="fi===0 ? 'bg-emerald-900/10' : 'bg-red-900/10'">
+                  <span class="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded"
+                    :class="fi===0 ? 'bg-emerald-700/50 text-emerald-300' : 'bg-red-700/50 text-red-300'"
+                    x-text="fi===0 ? 'KEEP' : 'DEL'"></span>
+                  <div class="flex-1 min-w-0">
+                    <div class="text-sm font-medium truncate" x-text="f.filename"></div>
+                    <div class="text-xs text-gray-500 truncate font-mono" x-text="f.path"></div>
+                  </div>
+                  <span class="text-xs tabular-nums text-gray-400 shrink-0"
+                    x-text="f.size_bytes ? (f.size_bytes/1073741824).toFixed(1)+' GB' : '—'"></span>
+                  <span class="text-sm font-bold tabular-nums shrink-0" :class="scoreColor(f.quality_score)"
+                    x-text="f.quality_score??'—'"></span>
+                </div>
+              </template>
             </div>
           </template>
         </div>
@@ -785,6 +844,43 @@
                 </div>
               </div>
             </template>
+          </div>
+        </div>
+        <!-- Savings opportunities -->
+        <div class="bg-gray-800 rounded-xl p-4 border border-gray-700">
+          <div class="text-sm font-medium mb-3">Savings Opportunities</div>
+          <div class="space-y-3">
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="text-sm text-red-400" x-text="(scanStats?.below_threshold_count??0) + ' files below threshold (≤'+Math.round(scanStats?.threshold??60)+')'"></div>
+                <div class="text-xs text-gray-500 mt-0.5"
+                  x-text="scanStats?.below_threshold_bytes ? (scanStats.below_threshold_bytes/1073741824).toFixed(1)+' GB — candidates for upgrade' : 'Run a scan to see data'"></div>
+              </div>
+              <button @click="triggerSearchAll()" :disabled="searchingAll||!searchAllMatchCount"
+                class="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 px-3 py-1 rounded text-xs font-medium shrink-0 ml-4">
+                <span x-text="searchingAll?'Searching…':'Search All'"></span>
+              </button>
+            </div>
+            <div class="border-t border-gray-700"></div>
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="text-sm text-purple-400" x-text="(scanStats?.has_non_english??0) + ' files with non-English streams'"></div>
+                <div class="text-xs text-gray-500 mt-0.5"
+                  x-text="scanStats?.non_english_bytes ? (scanStats.non_english_bytes/1073741824).toFixed(1)+' GB total file size' : ''"></div>
+              </div>
+              <button @click="setScanTab('files');scanNonEnglish=true"
+                class="bg-purple-800 hover:bg-purple-700 px-3 py-1 rounded text-xs font-medium shrink-0 ml-4">View</button>
+            </div>
+            <div class="border-t border-gray-700"></div>
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="text-sm text-amber-400" x-text="(scanStats?.duplicate_groups??0) + ' duplicate groups'"></div>
+                <div class="text-xs text-gray-500 mt-0.5"
+                  x-text="scanStats?.duplicate_savings_bytes ? '~'+(scanStats.duplicate_savings_bytes/1073741824).toFixed(1)+' GB recoverable by keeping best quality' : ''"></div>
+              </div>
+              <button @click="setScanTab('duplicates')"
+                class="bg-amber-800 hover:bg-amber-700 px-3 py-1 rounded text-xs font-medium shrink-0 ml-4">Resolve</button>
+            </div>
           </div>
         </div>
       </div>
@@ -1038,6 +1134,7 @@ function app() {
     // Scanner
     scanFiles: [], scanDuplicates: [], scanStats: null,
     scanTab: 'files', scanLoading: false, scanning: false, stripping: false,
+    searchingAll: false, resolvingDups: false,
     scanSearch: '', scanMaxScore: '', scanCodec: '', scanNonEnglish: false,
     scanFiltersOpen: false,
     selectedScanFiles: {}, expandedScanFile: null,
@@ -1146,6 +1243,7 @@ function app() {
       );
     },
     get selectedScanCount() { return Object.values(this.selectedScanFiles).filter(Boolean).length; },
+    get searchAllMatchCount() { return this.filteredScanFiles.filter(f=>f.radarr_id||f.sonarr_id).length; },
     get allScanSelected() {
       return this.filteredScanFiles.length > 0 && this.filteredScanFiles.every(f => this.selectedScanFiles[f.id]);
     },
@@ -1165,7 +1263,7 @@ function app() {
     // ── Init ──────────────────────────────────────────────────────────────────
     async init() {
       await Promise.all([this.loadRuns(),this.loadCandidates(),this.loadSchedules(),this.loadConfig()]);
-      this.loadStats();
+      this.loadStats(); this.loadScanStats();
       // Guard against stacking the background runs poll across Alpine re-inits
       if (!window._runsPoll) window._runsPoll = setInterval(()=>this.loadRuns(),15000);
       this._resumeRunningJobs();
@@ -1174,11 +1272,24 @@ function app() {
     _resumeRunningJobs() {
       const running = this.runs.filter(r => r.status === 'running');
       for (const r of running) {
-        if (r.type === 'scan')    this._resumeScan();
-        if (r.type === 'strip')   this._resumeStrip();
-        if (r.type === 'analyze') this._resumeAnalyze();
-        if (r.type === 'upgrade') this._resumeUpgrade();
+        if (r.type === 'scan')       this._resumeScan();
+        if (r.type === 'strip')      this._resumeStrip();
+        if (r.type === 'analyze')    this._resumeAnalyze();
+        if (r.type === 'upgrade')    this._resumeUpgrade();
+        if (r.type === 'search_all') this._resumeSearchAll();
       }
+    },
+    _resumeSearchAll() {
+      if (window._searchAllPoll) return;
+      this.searchingAll = true;
+      window._searchAllPoll = setInterval(async()=>{
+        await this.loadRuns();
+        const r = this.runs.find(x=>x.type==='search_all');
+        if (!r || r.status !== 'running') {
+          clearInterval(window._searchAllPoll); window._searchAllPoll = null;
+          this.searchingAll = false;
+        }
+      },3000);
     },
     _resumeScan() {
       if (window._scanPoll) return;  // already polling — don't stack
@@ -1238,6 +1349,7 @@ function app() {
       this.activeTab = t;
       if (t==='library' && !this.movies.length && !this.series.length) this.loadLibrary();
       if (t==='dashboard' && !this.stats) this.loadStats();
+      if (t==='dashboard' && !this.scanStats) this.loadScanStats();
       if (t==='scan' && !this.scanFiles.length && !this.scanLoading) this.loadScanFiles();
     },
     setLibraryTab(t) {
@@ -1503,6 +1615,45 @@ function app() {
           }
         },3000);
       } catch(e) { this.flash('Error: '+e.message,true); this.stripping=false; }
+    },
+    async triggerSearchAll() {
+      const n = this.searchAllMatchCount;
+      if (!n) { this.flash('No linked files match current filters', true); return; }
+      if (!confirm(`Trigger Radarr/Sonarr search for ${n} file(s) matching current filters?\n\nThis asks your indexers to find better versions.`)) return;
+      this.searchingAll = true;
+      try {
+        await this.req('POST','/api/runs/search-all',{
+          max_score: this.scanMaxScore ? parseFloat(this.scanMaxScore) : undefined,
+          codec: this.scanCodec || undefined,
+          non_english: this.scanNonEnglish || undefined,
+        });
+        this.flash(`Bulk search started for ${n} files`);
+        if (window._searchAllPoll) clearInterval(window._searchAllPoll);
+        window._searchAllPoll = setInterval(async()=>{
+          await this.loadRuns();
+          const r = this.runs.find(x=>x.type==='search_all');
+          if (!r || r.status !== 'running') {
+            clearInterval(window._searchAllPoll); window._searchAllPoll = null;
+            this.searchingAll = false;
+            if (r) this.flash(r.status==='success'?'Bulk search complete':'Bulk search failed', r.status!=='success');
+          }
+        },3000);
+      } catch(e) { this.flash('Error: '+e.message,true); this.searchingAll=false; }
+    },
+    async resolveAllDuplicates() {
+      const groups = this.dupGroups(this.scanDuplicates);
+      if (!groups.length) return;
+      const gb = this.scanStats?.duplicate_savings_bytes
+        ? (this.scanStats.duplicate_savings_bytes/1073741824).toFixed(1)+' GB'
+        : 'some space';
+      if (!confirm(`Delete the lower-quality copy from each of ${groups.length} duplicate group(s)?\n\nThis will free ~${gb} and cannot be undone. Make sure you have backups.`)) return;
+      this.resolvingDups = true;
+      try {
+        const res = await this.req('POST','/api/scan/duplicates/resolve');
+        await Promise.all([this.loadScanDuplicates(), this.loadScanStats()]);
+        this.flash(`Deleted ${res.deleted} file(s), freed ${res.freed_gb} GB`+(res.errors?.length?` (${res.errors.length} errors)`:''));
+      } catch(e) { this.flash('Error: '+e.message,true); }
+      this.resolvingDups = false;
     },
     async searchScanFile(f) {
       try { await this.req('POST',`/api/scan/files/${f.id}/search`); this.flash(`Search triggered: ${f.filename}`); }
