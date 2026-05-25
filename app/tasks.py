@@ -5,6 +5,8 @@ import logging
 import os
 import subprocess
 import time
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -383,7 +385,8 @@ _SCAN_INSERT_SQL = """
       scanned_at=excluded.scanned_at,
       radarr_id=excluded.radarr_id, sonarr_id=excluded.sonarr_id
 """
-SCAN_BATCH = 5  # flush to DB and update progress every N scanned files
+SCAN_WORKERS = int(os.getenv("SCAN_WORKERS", "4"))
+SCAN_BATCH = 20  # flush to DB and update progress every N completed files
 
 
 def _scan_progress(run_id: int, summary: dict, logs: list):
@@ -395,6 +398,37 @@ def _scan_progress(run_id: int, summary: dict, logs: list):
 # ---------------------------------------------------------------------------
 # Scan
 # ---------------------------------------------------------------------------
+
+def _scan_worker(path: str, size_bytes: int, mtime: float, do_hash: bool,
+                 radarr_lib: dict, sonarr_lib: dict, now: str):
+    try:
+        filename = os.path.basename(path)
+        info = sc.scan_file(path, do_hash=do_hash)
+        if info is None:
+            return ('error', path, None)
+        stem = Path(filename).stem.lower()
+        radarr_id = radarr_lib.get(stem)
+        sonarr_id = None
+        if not radarr_id:
+            path_lower = path.lower()
+            for title, sid in sonarr_lib.items():
+                if title in path_lower:
+                    sonarr_id = sid
+                    break
+        row = (
+            path, filename, size_bytes, mtime, info["file_hash"],
+            info["duration_seconds"], info["video_codec"], info["width"], info["height"],
+            info["video_bitrate_kbps"], info["hdr_type"], info["audio_codec"],
+            info["audio_channels"], info["non_english_audio"], info["non_english_subs"],
+            info["audio_langs"], info["sub_langs"],
+            info["quality_score"], info["score_breakdown"], now,
+            radarr_id, sonarr_id,
+        )
+        return ('ok', path, row)
+    except Exception as e:
+        log.warning("Error scanning %s: %s", path, e)
+        return ('error', path, str(e))
+
 
 def run_scan(params: dict = None):
     if params is None:
@@ -413,8 +447,33 @@ def run_scan(params: dict = None):
         files = sc.walk_media_paths(media_paths)
         logs.append(f"Found {len(files)} video file(s)")
 
-        # Publish initial state so the UI shows total count before any files arrive
-        _scan_progress(run_id, {"total": len(files), "scanned": 0, "skipped": 0, "errors": 0, "done": 0}, logs)
+        # Pre-load existing records so skip check is a dict lookup, not 25k DB queries
+        with db() as conn:
+            existing = {
+                row["path"]: (row["size_bytes"], row["mtime"])
+                for row in conn.execute("SELECT path, size_bytes, mtime FROM scan_files").fetchall()
+            }
+
+        # Separate files into skip (unchanged) and to_scan (new or modified)
+        to_scan = []   # list of (path, size_bytes, mtime)
+        skipped = 0
+        for path in files:
+            try:
+                st = os.stat(path)
+                ex = existing.get(path)
+                if ex and ex[0] == st.st_size and ex[1] == st.st_mtime:
+                    skipped += 1
+                else:
+                    to_scan.append((path, st.st_size, st.st_mtime))
+            except Exception as e:
+                log.warning("stat failed %s: %s", path, e)
+
+        logs.append(f"Skipping {skipped} unchanged file(s), scanning {len(to_scan)} new/modified")
+
+        # Only hash files whose size is shared with another file (duplicate candidates)
+        size_counts = Counter(size for _, size, _ in to_scan)
+
+        _scan_progress(run_id, {"total": len(files), "scanned": 0, "skipped": skipped, "errors": 0, "done": skipped}, logs)
 
         radarr_lib = {}
         sonarr_lib = {}
@@ -435,64 +494,44 @@ def run_scan(params: dict = None):
             except Exception as e:
                 logs.append(f"Sonarr lookup unavailable: {e}")
 
-        scanned = skipped = errors = 0
+        scanned = errors = 0
+        done = skipped
         now = _now()
         batch = []
 
-        for idx, path in enumerate(files):
-            try:
-                stat = os.stat(path)
-                size_bytes = stat.st_size
-                mtime = stat.st_mtime
-                filename = os.path.basename(path)
+        workers = min(SCAN_WORKERS, len(to_scan)) if to_scan else 1
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(
+                    _scan_worker,
+                    path, size_bytes, mtime,
+                    size_counts[size_bytes] > 1,
+                    radarr_lib, sonarr_lib, now
+                ): path
+                for path, size_bytes, mtime in to_scan
+            }
 
-                with db() as conn:
-                    existing = conn.execute(
-                        "SELECT id, mtime FROM scan_files WHERE path=?", (path,)
-                    ).fetchone()
-
-                if existing and existing["mtime"] == mtime:
-                    skipped += 1
+            for future in as_completed(futures):
+                done += 1
+                status, path, result = future.result()
+                if status == 'ok':
+                    batch.append(result)
+                    scanned += 1
                 else:
-                    info = sc.scan_file(path)
-                    if info is None:
-                        errors += 1
-                    else:
-                        stem = Path(filename).stem.lower()
-                        radarr_id = radarr_lib.get(stem)
-                        sonarr_id = None
-                        if not radarr_id:
-                            for title, sid in sonarr_lib.items():
-                                if title in path.lower():
-                                    sonarr_id = sid
-                                    break
-                        batch.append((
-                            path, filename, size_bytes, mtime, info["file_hash"],
-                            info["duration_seconds"], info["video_codec"], info["width"], info["height"],
-                            info["video_bitrate_kbps"], info["hdr_type"], info["audio_codec"],
-                            info["audio_channels"], info["non_english_audio"], info["non_english_subs"],
-                            info["audio_langs"], info["sub_langs"],
-                            info["quality_score"], info["score_breakdown"], now,
-                            radarr_id, sonarr_id,
-                        ))
-                        scanned += 1
+                    errors += 1
+                    if result:
+                        logs.append(f"Error: {os.path.basename(path)}: {result}")
 
-            except Exception as e:
-                log.warning("Error scanning %s: %s", path, e)
-                logs.append(f"Error: {os.path.basename(path)}: {e}")
-                errors += 1
-
-            # Flush batch to DB and push a progress update
-            last = idx == len(files) - 1
-            if len(batch) >= SCAN_BATCH or (last and batch):
-                with db() as conn:
-                    for row in batch:
-                        conn.execute(_SCAN_INSERT_SQL, row)
-                batch = []
-                _scan_progress(run_id, {
-                    "total": len(files), "scanned": scanned,
-                    "skipped": skipped, "errors": errors, "done": idx + 1,
-                }, logs)
+                if len(batch) >= SCAN_BATCH or done == len(files):
+                    if batch:
+                        with db() as conn:
+                            for row in batch:
+                                conn.execute(_SCAN_INSERT_SQL, row)
+                        batch = []
+                    _scan_progress(run_id, {
+                        "total": len(files), "scanned": scanned,
+                        "skipped": skipped, "errors": errors, "done": done,
+                    }, logs)
 
         summary = {"total": len(files), "scanned": scanned, "skipped": skipped, "errors": errors}
         logs.append(f"Done — scanned {scanned}, skipped {skipped} (unchanged), errors {errors}")

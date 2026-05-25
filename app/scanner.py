@@ -179,7 +179,7 @@ def analyse_streams(probe: dict) -> dict:
     }
 
 
-def scan_file(path: str) -> dict | None:
+def scan_file(path: str, do_hash: bool = True) -> dict | None:
     probe = probe_file(path)
     if not probe:
         return None
@@ -196,7 +196,7 @@ def scan_file(path: str) -> dict | None:
     hdr = _detect_hdr(video)
 
     return {
-        'file_hash':          compute_hash(path),
+        'file_hash':          compute_hash(path) if do_hash else '',
         'duration_seconds':   float(fmt.get('duration', 0) or 0),
         'video_codec':        (video.get('codec_name') or ''),
         'width':              int(video.get('width', 0)),
