@@ -21,10 +21,6 @@ def init_db():
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
     with db() as conn:
-        # Any job still marked 'running' at startup was killed mid-flight by a restart
-        conn.execute(
-            "UPDATE runs SET status='interrupted', finished_at=datetime('now') WHERE status='running'"
-        )
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -88,3 +84,7 @@ def init_db():
                 sonarr_id INTEGER
             );
         """)
+        # Any job still marked 'running' at startup was killed mid-flight by a restart
+        conn.execute(
+            "UPDATE runs SET status='interrupted', finished_at=datetime('now') WHERE status='running'"
+        )
