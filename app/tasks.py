@@ -3,6 +3,7 @@ import io
 import json
 import logging
 import os
+import re
 import subprocess
 import time
 from collections import Counter
@@ -365,14 +366,25 @@ def _safe_float(v: str, default: float = 999.0) -> float:
         return default
 
 
+_SEASON_RE = re.compile(r'[Ss]eason\s*(\d{1,2})|[Ss](\d{1,2})[Ee]\d+')
+
+
+def _parse_season(path: str):
+    m = _SEASON_RE.search(path)
+    if m:
+        return int(m.group(1) or m.group(2))
+    return None
+
+
 _SCAN_INSERT_SQL = """
     INSERT INTO scan_files
       (path, filename, size_bytes, mtime, file_hash,
        duration_seconds, video_codec, width, height, video_bitrate_kbps,
        hdr_type, audio_codec, audio_channels,
        non_english_audio, non_english_subs, audio_langs, sub_langs,
-       quality_score, score_breakdown, scanned_at, radarr_id, sonarr_id)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       quality_score, score_breakdown, scanned_at, radarr_id, sonarr_id,
+       season_number)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ON CONFLICT(path) DO UPDATE SET
       filename=excluded.filename, size_bytes=excluded.size_bytes,
       mtime=excluded.mtime, file_hash=excluded.file_hash,
@@ -385,7 +397,8 @@ _SCAN_INSERT_SQL = """
       audio_langs=excluded.audio_langs, sub_langs=excluded.sub_langs,
       quality_score=excluded.quality_score, score_breakdown=excluded.score_breakdown,
       scanned_at=excluded.scanned_at,
-      radarr_id=excluded.radarr_id, sonarr_id=excluded.sonarr_id
+      radarr_id=excluded.radarr_id, sonarr_id=excluded.sonarr_id,
+      season_number=excluded.season_number
 """
 SCAN_WORKERS = int(os.getenv("SCAN_WORKERS", "4"))
 SCAN_BATCH = 20  # flush to DB and update progress every N completed files
@@ -411,6 +424,7 @@ def run_search_all(params: dict, filters: dict):
         codec = filters.get("codec")
         non_english = filters.get("non_english")
         force = bool(filters.get("force", False))
+        season_upgrade = bool(filters.get("season_upgrade", False))
         if max_score is not None:
             clauses.append("quality_score <= ?"); args.append(float(max_score))
         if codec:
@@ -428,7 +442,7 @@ def run_search_all(params: dict, filters: dict):
         if limit > 0:
             files = files[:limit]
 
-        logs.append(f"Found {len(files)} linked file(s) matching filters (delay={delay}s, force={force})")
+        logs.append(f"Found {len(files)} linked file(s) matching filters (delay={delay}s, force={force}, season_upgrade={season_upgrade})")
         if limit > 0:
             logs.append(f"Rate limit: {limit} files per run, {delay}s between each")
         _scan_progress(run_id, {"total": len(files), "triggered": 0, "skipped": 0, "errors": 0, "done": 0}, logs)
@@ -437,35 +451,114 @@ def run_search_all(params: dict, filters: dict):
         sonarr = SonarrClient(str(params["sonarr_url"]), str(params["sonarr_api_key"])) if params.get("sonarr_api_key") else None
         triggered = skipped = errors = 0
 
-        for i, f in enumerate(files):
-            ok = False
-            if f.get("radarr_id") and radarr:
-                try:
-                    if force:
-                        movie = radarr.movie(int(f["radarr_id"]))
-                        mf = (movie.get("movieFile") or {}) if movie else {}
-                        if mf.get("id"):
-                            radarr.delete_file(int(mf["id"]))
-                            logs.append(f"Deleted file: {f['filename']}")
-                    radarr.search(int(f["radarr_id"]))
-                    triggered += 1; ok = True
-                except Exception as e:
-                    errors += 1; logs.append(f"Error {f['filename']}: {e}")
-            elif f.get("sonarr_id") and sonarr:
-                try:
-                    sonarr.search_series(int(f["sonarr_id"]))
-                    triggered += 1; ok = True
-                except Exception as e:
-                    errors += 1; logs.append(f"Error {f['filename']}: {e}")
-            else:
-                skipped += 1
-            if ok and delay:
-                time.sleep(delay)
-            if (i + 1) % 20 == 0 or i == len(files) - 1:
-                _scan_progress(run_id, {
-                    "total": len(files), "triggered": triggered,
-                    "skipped": skipped, "errors": errors, "done": i + 1,
-                }, logs)
+        if season_upgrade and sonarr:
+            # Split files by type
+            radarr_files = [f for f in files if f.get("radarr_id") and not f.get("sonarr_id")]
+            sonarr_files = [f for f in files if f.get("sonarr_id")]
+            other_files = [f for f in files if not f.get("radarr_id") and not f.get("sonarr_id")]
+
+            # Group sonarr files: by (sonarr_id, season_number) when season is known,
+            # or deduplicated by sonarr_id when season is unknown
+            season_groups = {}   # (sid, sn) -> [files]
+            no_season = {}       # sid -> one representative file
+            for f in sonarr_files:
+                sn = f.get("season_number")
+                sid = int(f["sonarr_id"])
+                if sn is not None:
+                    season_groups.setdefault((sid, int(sn)), []).append(f)
+                else:
+                    no_season[sid] = f
+
+            # Build ordered work list: radarr files first, then season groups, then no-season series
+            work = (
+                [('radarr', f) for f in radarr_files]
+                + [('season', (key, grp)) for key, grp in season_groups.items()]
+                + [('series', f) for f in no_season.values()]
+                + [('skip', f) for f in other_files]
+            )
+            done = 0
+
+            for i, (kind, item) in enumerate(work):
+                ok = False
+                if kind == 'radarr':
+                    f = item
+                    try:
+                        if force:
+                            movie = radarr.movie(int(f["radarr_id"]))
+                            mf = (movie.get("movieFile") or {}) if movie else {}
+                            if mf.get("id"):
+                                radarr.delete_file(int(mf["id"]))
+                                logs.append(f"Deleted file: {f['filename']}")
+                        radarr.search(int(f["radarr_id"]))
+                        triggered += 1; ok = True
+                    except Exception as e:
+                        errors += 1; logs.append(f"Error {f['filename']}: {e}")
+                    done += 1
+                elif kind == 'season':
+                    (sid, sn), grp = item
+                    try:
+                        sonarr.search_season(sid, sn)
+                        triggered += 1; ok = True
+                        logs.append(f"Season search: series_id={sid} season={sn} ({len(grp)} file(s))")
+                    except Exception as e:
+                        # Fall back to series search for this series
+                        try:
+                            sonarr.search_series(sid)
+                            triggered += 1; ok = True
+                            logs.append(f"Season fallback→series: series_id={sid} season={sn} ({e})")
+                        except Exception as e2:
+                            errors += 1
+                            logs.append(f"Error series_id={sid} season={sn}: {e2}")
+                    done += len(grp)
+                elif kind == 'series':
+                    f = item
+                    try:
+                        sonarr.search_series(int(f["sonarr_id"]))
+                        triggered += 1; ok = True
+                    except Exception as e:
+                        errors += 1; logs.append(f"Error {f['filename']}: {e}")
+                    done += 1
+                else:
+                    skipped += 1
+                    done += 1
+
+                if ok and delay:
+                    time.sleep(delay)
+                if (i + 1) % 20 == 0 or i == len(work) - 1:
+                    _scan_progress(run_id, {
+                        "total": len(files), "triggered": triggered,
+                        "skipped": skipped, "errors": errors, "done": done,
+                    }, logs)
+        else:
+            for i, f in enumerate(files):
+                ok = False
+                if f.get("radarr_id") and radarr:
+                    try:
+                        if force:
+                            movie = radarr.movie(int(f["radarr_id"]))
+                            mf = (movie.get("movieFile") or {}) if movie else {}
+                            if mf.get("id"):
+                                radarr.delete_file(int(mf["id"]))
+                                logs.append(f"Deleted file: {f['filename']}")
+                        radarr.search(int(f["radarr_id"]))
+                        triggered += 1; ok = True
+                    except Exception as e:
+                        errors += 1; logs.append(f"Error {f['filename']}: {e}")
+                elif f.get("sonarr_id") and sonarr:
+                    try:
+                        sonarr.search_series(int(f["sonarr_id"]))
+                        triggered += 1; ok = True
+                    except Exception as e:
+                        errors += 1; logs.append(f"Error {f['filename']}: {e}")
+                else:
+                    skipped += 1
+                if ok and delay:
+                    time.sleep(delay)
+                if (i + 1) % 20 == 0 or i == len(files) - 1:
+                    _scan_progress(run_id, {
+                        "total": len(files), "triggered": triggered,
+                        "skipped": skipped, "errors": errors, "done": i + 1,
+                    }, logs)
 
         summary = {"total": len(files), "triggered": triggered, "skipped": skipped, "errors": errors}
         logs.append(f"Done — triggered {triggered}, skipped {skipped} (unlinked), errors {errors}")
@@ -499,6 +592,7 @@ def _scan_worker(path: str, size_bytes: int, mtime: float, do_hash: bool,
                 if title in path_lower:
                     sonarr_id = sid
                     break
+        season_number = _parse_season(path) if sonarr_id else None
         row = (
             path, filename, size_bytes, mtime, info["file_hash"],
             info["duration_seconds"], info["video_codec"], info["width"], info["height"],
@@ -506,7 +600,7 @@ def _scan_worker(path: str, size_bytes: int, mtime: float, do_hash: bool,
             info["audio_channels"], info["non_english_audio"], info["non_english_subs"],
             info["audio_langs"], info["sub_langs"],
             info["quality_score"], info["score_breakdown"], now,
-            radarr_id, sonarr_id,
+            radarr_id, sonarr_id, season_number,
         )
         return ('ok', path, row)
     except Exception as e:

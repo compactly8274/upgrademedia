@@ -414,7 +414,7 @@ def trigger_scan(body: dict = {}):
 
 @app.post("/api/runs/search-all")
 def trigger_search_all(body: dict = {}):
-    filters = {k: body.get(k) for k in ("max_score", "codec", "non_english", "force")}
+    filters = {k: body.get(k) for k in ("max_score", "codec", "non_english", "force", "season_upgrade")}
     params = _effective_config()
     threading.Thread(target=tasks.run_search_all, args=(params, filters), daemon=True).start()
     return {"queued": True}

@@ -81,7 +81,14 @@ def init_db():
                 scanned_at TEXT,
                 stripped_at TEXT,
                 radarr_id INTEGER,
-                sonarr_id INTEGER
+                sonarr_id INTEGER,
+                season_number INTEGER
             );
             UPDATE runs SET status='interrupted', finished_at=datetime('now') WHERE status='running';
         """)
+    # Safe migration for existing databases
+    try:
+        with db() as conn:
+            conn.execute("ALTER TABLE scan_files ADD COLUMN season_number INTEGER")
+    except Exception:
+        pass  # Column already exists

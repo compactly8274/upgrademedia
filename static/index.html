@@ -553,6 +553,10 @@
           <input type="checkbox" x-model="scanForce">
           <span title="Deletes the existing file before searching, forcing Radarr to grab a new one">Force</span>
         </label>
+        <label x-show="scanTab==='files'" x-cloak class="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer shrink-0 select-none">
+          <input type="checkbox" x-model="scanSeasonUpgrade">
+          <span title="Groups TV episodes by season and triggers a SeasonSearch in Sonarr, falling back to series search if the season call fails">Season</span>
+        </label>
         <button @click="triggerSearchAll()" :disabled="searchingAll||scanning||!searchAllMatchCount"
           class="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 px-3 py-2 rounded-lg text-sm font-medium transition-colors shrink-0"
           x-show="scanTab==='files'" x-cloak>
@@ -1146,7 +1150,7 @@ function app() {
     scanFiles: [], scanDuplicates: [], scanStats: null,
     scanTab: 'files', scanLoading: false, scanning: false, stripping: false,
     searchingAll: false, resolvingDups: false,
-    scanSearch: '', scanMaxScore: '', scanCodec: '', scanNonEnglish: false,
+    scanSearch: '', scanMaxScore: '', scanCodec: '', scanNonEnglish: false, scanSeasonUpgrade: false,
     scanFiltersOpen: false,
     selectedScanFiles: {}, expandedScanFile: null,
     scanPage: 1, scanPageSize: 100,
@@ -1670,6 +1674,7 @@ function app() {
       if (limit > 0) msg += `\nLimit: ${limit} per run`;
       msg += `\nEstimated time: ~${estMins} min`;
       if (this.scanForce) msg += `\n\nForce mode: existing files will be deleted before searching.`;
+      if (this.scanSeasonUpgrade) msg += `\n\nSeason mode: TV episodes grouped by season — one SeasonSearch per season (falls back to series search).`;
       if (!confirm(msg)) return;
       this.searchingAll = true;
       try {
@@ -1678,6 +1683,7 @@ function app() {
           codec: this.scanCodec || undefined,
           non_english: this.scanNonEnglish || undefined,
           force: this.scanForce || undefined,
+          season_upgrade: this.scanSeasonUpgrade || undefined,
         });
         this.flash(`Bulk search started for ${n} files`);
         if (window._searchAllPoll) clearInterval(window._searchAllPoll);

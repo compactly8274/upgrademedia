@@ -64,6 +64,9 @@ class SonarrClient(_Base):
     def search_series(self, series_id: int):
         return self._post("/api/v3/command", {"name": "SeriesSearch", "seriesId": series_id})
 
+    def search_season(self, series_id: int, season_number: int):
+        return self._post("/api/v3/command", {"name": "SeasonSearch", "seriesId": series_id, "seasonNumber": season_number})
+
     def search_episode(self, ep_ids: list):
         return self._post("/api/v3/command", {"name": "EpisodeSearch", "episodeIds": ep_ids})
 
