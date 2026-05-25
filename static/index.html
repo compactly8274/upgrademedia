@@ -1166,8 +1166,8 @@ function app() {
     async init() {
       await Promise.all([this.loadRuns(),this.loadCandidates(),this.loadSchedules(),this.loadConfig()]);
       this.loadStats();
-      setInterval(()=>this.loadRuns(),15000);
-      // Resume polling for any jobs that were already running before this page load
+      // Guard against stacking the background runs poll across Alpine re-inits
+      if (!window._runsPoll) window._runsPoll = setInterval(()=>this.loadRuns(),15000);
       this._resumeRunningJobs();
     },
 
@@ -1181,50 +1181,54 @@ function app() {
       }
     },
     _resumeScan() {
-      if (this.scanning) return;
+      if (window._scanPoll) return;  // already polling — don't stack
       this.scanning = true;
       if (this.activeTab === 'scan') this.loadScanFiles();
-      const poll = setInterval(async()=>{
+      window._scanPoll = setInterval(async()=>{
         await this.loadRuns(); await this.loadScanFiles();
         const r = this.runs.find(x=>x.type==='scan');
         if (!r || r.status !== 'running') {
-          clearInterval(poll); this.scanning = false;
+          clearInterval(window._scanPoll); window._scanPoll = null;
+          this.scanning = false;
           this.loadScanStats();
         }
       },2000);
     },
     _resumeStrip() {
-      if (this.stripping) return;
+      if (window._stripPoll) return;
       this.stripping = true;
-      const poll = setInterval(async()=>{
+      window._stripPoll = setInterval(async()=>{
         await this.loadRuns();
         const r = this.runs.find(x=>x.type==='strip');
         if (!r || r.status !== 'running') {
-          clearInterval(poll); this.stripping = false;
+          clearInterval(window._stripPoll); window._stripPoll = null;
+          this.stripping = false;
           this.loadScanFiles();
         }
       },2000);
     },
     _resumeAnalyze() {
-      if (this.analyzing) return;
+      if (window._analyzePoll) return;
       this.analyzing = true;
-      const poll = setInterval(async()=>{
+      window._analyzePoll = setInterval(async()=>{
         await this.loadRuns();
         const r = this.runs.find(x=>x.type==='analyze');
         if (!r || r.status !== 'running') {
-          clearInterval(poll); this.analyzing = false;
+          clearInterval(window._analyzePoll); window._analyzePoll = null;
+          this.analyzing = false;
           await this.loadCandidates();
         }
       },3000);
     },
     _resumeUpgrade() {
-      if (this.upgrading) return;
+      if (window._upgradePoll) return;
       this.upgrading = true;
-      const poll = setInterval(async()=>{
+      window._upgradePoll = setInterval(async()=>{
         await this.loadRuns();
         const r = this.runs.find(x=>x.type==='upgrade');
         if (!r || r.status !== 'running') {
-          clearInterval(poll); this.upgrading = false;
+          clearInterval(window._upgradePoll); window._upgradePoll = null;
+          this.upgrading = false;
           this.upgradeRunId=r?.id; this.upgradeRunStatus=r?.status||''; this.upgradeLog=r?.log||'';
         }
       },2000);
@@ -1387,11 +1391,13 @@ function app() {
       try {
         await this.req('POST','/api/runs/analyze',{});
         this.flash('Analyze scan started');
-        const t=setInterval(async()=>{
+        if (window._analyzePoll) clearInterval(window._analyzePoll);
+        window._analyzePoll = setInterval(async()=>{
           await this.loadRuns();
           const latest=this.runs.find(r=>r.type==='analyze');
           if (latest&&latest.status!=='running'){
-            clearInterval(t);this.analyzing=false;
+            clearInterval(window._analyzePoll); window._analyzePoll = null;
+            this.analyzing=false;
             await this.loadCandidates();
             this.flash(latest.status==='success'?'Scan complete':'Scan failed',latest.status!=='success');
           }
@@ -1407,11 +1413,13 @@ function app() {
         fd.append('threshold',this.upgradeThreshold);
         await this.req('POST','/api/runs/upgrade',fd,true);
         this.flash('Upgrade started');
-        const t=setInterval(async()=>{
+        if (window._upgradePoll) clearInterval(window._upgradePoll);
+        window._upgradePoll = setInterval(async()=>{
           await this.loadRuns();
           const latest=this.runs.find(r=>r.type==='upgrade');
           if (latest&&latest.status!=='running'){
-            clearInterval(t);this.upgrading=false;
+            clearInterval(window._upgradePoll); window._upgradePoll = null;
+            this.upgrading=false;
             this.upgradeRunId=latest.id;this.upgradeRunStatus=latest.status;this.upgradeLog=latest.log||'';
           }
         },2000);
@@ -1460,12 +1468,14 @@ function app() {
       try {
         await this.req('POST','/api/runs/scan',{});
         this.flash('File scan started');
-        const poll = setInterval(async()=>{
+        if (window._scanPoll) clearInterval(window._scanPoll);
+        window._scanPoll = setInterval(async()=>{
           await this.loadRuns();
           await this.loadScanFiles();
           const r = this.runs.find(x=>x.type==='scan');
           if (r && r.status !== 'running') {
-            clearInterval(poll); this.scanning = false;
+            clearInterval(window._scanPoll); window._scanPoll = null;
+            this.scanning = false;
             this.loadScanStats();
             this.flash(r.status==='success'?'Scan complete':'Scan failed', r.status!=='success');
           }
@@ -1481,11 +1491,13 @@ function app() {
         await this.req('POST','/api/runs/strip',{file_ids:ids});
         this.flash(`Stripping ${ids.length} file(s)…`);
         this.selectedScanFiles = {};
-        const poll = setInterval(async()=>{
+        if (window._stripPoll) clearInterval(window._stripPoll);
+        window._stripPoll = setInterval(async()=>{
           await this.loadRuns();
           const r = this.runs.find(x=>x.type==='strip');
           if (r && r.status !== 'running') {
-            clearInterval(poll); this.stripping = false;
+            clearInterval(window._stripPoll); window._stripPoll = null;
+            this.stripping = false;
             await this.loadScanFiles();
             this.flash(r.status==='success'?'Strip complete':'Strip failed', r.status!=='success');
           }
