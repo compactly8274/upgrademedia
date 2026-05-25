@@ -557,6 +557,12 @@
           <input type="checkbox" x-model="scanSeasonUpgrade">
           <span title="Groups TV episodes by season and triggers a SeasonSearch in Sonarr, falling back to series search if the season call fails">Season</span>
         </label>
+        <button @click="triggerStripNonEnglish()" :disabled="stripping||scanning"
+          x-show="scanTab==='files' && nonEnglishScanCount > 0" x-cloak
+          class="bg-purple-700 hover:bg-purple-600 disabled:opacity-40 px-3 py-2 rounded-lg text-sm font-medium transition-colors shrink-0"
+          :title="'Strip non-English audio &amp; subtitles from all loaded files with foreign streams'">
+          <span x-text="stripping ? 'Stripping…' : 'Strip Non-English ('+nonEnglishScanCount+')'"></span>
+        </button>
         <button @click="triggerSearchAll()" :disabled="searchingAll||scanning||!searchAllMatchCount"
           class="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 px-3 py-2 rounded-lg text-sm font-medium transition-colors shrink-0"
           x-show="scanTab==='files'" x-cloak>
@@ -620,7 +626,7 @@
         <span class="text-sm text-blue-300" x-text="selectedScanCount + ' selected'"></span>
         <button @click="triggerStrip()" :disabled="stripping"
           class="bg-purple-700 hover:bg-purple-600 disabled:opacity-40 px-3 py-1 rounded text-xs font-medium ml-auto">
-          <span x-text="stripping ? 'Stripping…' : 'Strip non-English streams'"></span>
+          <span x-text="stripping ? 'Stripping…' : 'Strip selected'"></span>
         </button>
         <button @click="selectedScanFiles={}" class="text-gray-400 hover:text-white text-xs">Clear</button>
       </div>
@@ -669,6 +675,9 @@
                   </td>
                   <td class="px-3 py-2 text-right" @click.stop>
                     <div class="flex justify-end gap-1">
+                      <button x-show="f.non_english_audio>0||f.non_english_subs>0" @click="stripScanFile(f)"
+                        :disabled="stripping" title="Strip non-English audio &amp; subtitles"
+                        class="bg-purple-800 hover:bg-purple-700 disabled:opacity-40 px-2 py-1 rounded text-xs">🌐</button>
                       <button x-show="f.radarr_id||f.sonarr_id" @click="searchScanFile(f)"
                         class="bg-blue-800 hover:bg-blue-700 px-2 py-1 rounded text-xs">↑</button>
                       <button @click="deleteScanEntry(f)"
@@ -1260,6 +1269,7 @@ function app() {
     },
     get selectedScanCount() { return Object.values(this.selectedScanFiles).filter(Boolean).length; },
     get searchAllMatchCount() { return this.serverSearchCount ?? this.filteredScanFiles.filter(f=>f.radarr_id||f.sonarr_id).length; },
+    get nonEnglishScanCount() { return this.filteredScanFiles.filter(f=>f.non_english_audio>0||f.non_english_subs>0).length; },
     get paginatedScanFiles() { return this.filteredScanFiles.slice(0, this.scanPage * this.scanPageSize); },
     get allScanSelected() {
       return this.filteredScanFiles.length > 0 && this.filteredScanFiles.every(f => this.selectedScanFiles[f.id]);
@@ -1649,6 +1659,48 @@ function app() {
         await this.req('POST','/api/runs/strip',{file_ids:ids});
         this.flash(`Stripping ${ids.length} file(s)…`);
         this.selectedScanFiles = {};
+        if (window._stripPoll) clearInterval(window._stripPoll);
+        window._stripPoll = setInterval(async()=>{
+          await this.loadRuns();
+          const r = this.runs.find(x=>x.type==='strip');
+          if (r && r.status !== 'running') {
+            clearInterval(window._stripPoll); window._stripPoll = null;
+            this.stripping = false;
+            await this.loadScanFiles();
+            this.flash(r.status==='success'?'Strip complete':'Strip failed', r.status!=='success');
+          }
+        },3000);
+      } catch(e) { this.flash('Error: '+e.message,true); this.stripping=false; }
+    },
+    async stripScanFile(f) {
+      if (!confirm(`Strip non-English audio & subtitles from:\n${f.filename}\n\nThis overwrites the original file. Make sure you have a backup.`)) return;
+      this.stripping = true;
+      try {
+        await this.req('POST','/api/runs/strip',{file_ids:[f.id]});
+        this.flash(`Stripping: ${f.filename}…`);
+        if (window._stripPoll) clearInterval(window._stripPoll);
+        window._stripPoll = setInterval(async()=>{
+          await this.loadRuns();
+          const r = this.runs.find(x=>x.type==='strip');
+          if (r && r.status !== 'running') {
+            clearInterval(window._stripPoll); window._stripPoll = null;
+            this.stripping = false;
+            await this.loadScanFiles();
+            this.flash(r.status==='success'?'Strip complete':'Strip failed', r.status!=='success');
+          }
+        },3000);
+      } catch(e) { this.flash('Error: '+e.message,true); this.stripping=false; }
+    },
+    async triggerStripNonEnglish() {
+      const ids = this.filteredScanFiles
+        .filter(f=>f.non_english_audio>0||f.non_english_subs>0)
+        .map(f=>f.id);
+      if (!ids.length) { this.flash('No files with non-English streams loaded', true); return; }
+      if (!confirm(`Strip non-English audio & subtitles from ${ids.length} file(s)?\n\nThis overwrites the original files. Make sure you have backups.`)) return;
+      this.stripping = true;
+      try {
+        await this.req('POST','/api/runs/strip',{file_ids:ids});
+        this.flash(`Stripping ${ids.length} file(s)…`);
         if (window._stripPoll) clearInterval(window._stripPoll);
         window._stripPoll = setInterval(async()=>{
           await this.loadRuns();
