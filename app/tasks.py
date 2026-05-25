@@ -58,6 +58,8 @@ def _effective_config(overrides: dict = None) -> dict:
         "webhook_url": settings.webhook_url,
         "webhook_type": settings.webhook_type,
         "media_paths": settings.media_paths,
+        "search_delay": settings.search_delay,
+        "search_limit": settings.search_limit,
     }
     for row in rows:
         cfg[row["key"]] = row["value"]
@@ -408,6 +410,7 @@ def run_search_all(params: dict, filters: dict):
         max_score = filters.get("max_score")
         codec = filters.get("codec")
         non_english = filters.get("non_english")
+        force = bool(filters.get("force", False))
         if max_score is not None:
             clauses.append("quality_score <= ?"); args.append(float(max_score))
         if codec:
@@ -420,18 +423,30 @@ def run_search_all(params: dict, filters: dict):
                 f"SELECT * FROM scan_files WHERE {' AND '.join(clauses)}", args
             ).fetchall()]
 
-        logs.append(f"Found {len(files)} linked file(s) matching filters")
+        delay = float(params.get("search_delay", settings.search_delay))
+        limit = int(params.get("search_limit", settings.search_limit))
+        if limit > 0:
+            files = files[:limit]
+
+        logs.append(f"Found {len(files)} linked file(s) matching filters (delay={delay}s, force={force})")
+        if limit > 0:
+            logs.append(f"Rate limit: {limit} files per run, {delay}s between each")
         _scan_progress(run_id, {"total": len(files), "triggered": 0, "skipped": 0, "errors": 0, "done": 0}, logs)
 
         radarr = RadarrClient(str(params["radarr_url"]), str(params["radarr_api_key"])) if params.get("radarr_api_key") else None
         sonarr = SonarrClient(str(params["sonarr_url"]), str(params["sonarr_api_key"])) if params.get("sonarr_api_key") else None
-        delay = float(params.get("delay", 0.5))
         triggered = skipped = errors = 0
 
         for i, f in enumerate(files):
             ok = False
             if f.get("radarr_id") and radarr:
                 try:
+                    if force:
+                        movie = radarr.movie(int(f["radarr_id"]))
+                        mf = (movie.get("movieFile") or {}) if movie else {}
+                        if mf.get("id"):
+                            radarr.delete_file(int(mf["id"]))
+                            logs.append(f"Deleted file: {f['filename']}")
                     radarr.search(int(f["radarr_id"]))
                     triggered += 1; ok = True
                 except Exception as e:

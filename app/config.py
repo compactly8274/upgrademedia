@@ -15,5 +15,7 @@ class Settings:
         self.webhook_url = os.getenv("WEBHOOK_URL", "")
         self.webhook_type = os.getenv("WEBHOOK_TYPE", "discord")
         self.media_paths = os.getenv("MEDIA_PATHS", "")
+        self.search_delay = int(os.getenv("SEARCH_DELAY", "30"))
+        self.search_limit = int(os.getenv("SEARCH_LIMIT", "100"))
 
 settings = Settings()

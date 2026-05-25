@@ -1,26 +1,33 @@
+import time
 from pathlib import Path
 import requests
 
 
 class _Base:
     def __init__(self, base_url: str, headers: dict):
-        # Strip angle brackets users sometimes paste from markdown/docs (e.g. <http://...>)
         self.base = base_url.strip().strip("<>").rstrip("/")
         self.session = requests.Session()
         self.session.headers.update(headers)
 
-    def _get(self, path: str, **params):
-        r = self.session.get(f"{self.base}{path}", params=params, timeout=20)
+    def _get(self, path: str, timeout: int = 60, **params):
+        for wait in (0, 3, 6):
+            if wait:
+                time.sleep(wait)
+            try:
+                r = self.session.get(f"{self.base}{path}", params=params, timeout=timeout)
+                r.raise_for_status()
+                return r.json()
+            except (requests.Timeout, requests.ConnectionError):
+                if wait == 6:
+                    raise
+
+    def _post(self, path: str, payload: dict, timeout: int = 30):
+        r = self.session.post(f"{self.base}{path}", json=payload, timeout=timeout)
         r.raise_for_status()
         return r.json()
 
-    def _post(self, path: str, payload: dict):
-        r = self.session.post(f"{self.base}{path}", json=payload, timeout=20)
-        r.raise_for_status()
-        return r.json()
-
-    def _delete(self, path: str, **params):
-        r = self.session.delete(f"{self.base}{path}", params=params, timeout=20)
+    def _delete(self, path: str, timeout: int = 30, **params):
+        r = self.session.delete(f"{self.base}{path}", params=params, timeout=timeout)
         r.raise_for_status()
 
 
@@ -29,10 +36,16 @@ class RadarrClient(_Base):
         super().__init__(url, {"X-Api-Key": api_key, "Accept": "application/json"})
 
     def movies(self):
-        return self._get("/api/v3/movie")
+        return self._get("/api/v3/movie", timeout=120)
+
+    def movie(self, movie_id: int):
+        return self._get(f"/api/v3/movie/{movie_id}")
 
     def search(self, movie_id: int):
         return self._post("/api/v3/command", {"name": "MoviesSearch", "movieIds": [movie_id]})
+
+    def delete_file(self, movie_file_id: int):
+        self._delete(f"/api/v3/moviefile/{movie_file_id}")
 
     def delete(self, movie_id: int):
         self._delete(f"/api/v3/movie/{movie_id}", deleteFiles="true", addImportExclusion="true")
@@ -43,7 +56,7 @@ class SonarrClient(_Base):
         super().__init__(url, {"X-Api-Key": api_key, "Accept": "application/json"})
 
     def series(self):
-        return self._get("/api/v3/series")
+        return self._get("/api/v3/series", timeout=120)
 
     def episodes(self, series_id: int):
         return self._get("/api/v3/episode", seriesId=series_id)

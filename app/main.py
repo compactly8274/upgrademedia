@@ -46,6 +46,8 @@ def _effective_config(overrides: dict = None) -> dict:
         "webhook_url": settings.webhook_url,
         "webhook_type": settings.webhook_type,
         "media_paths": settings.media_paths,
+        "search_delay": settings.search_delay,
+        "search_limit": settings.search_limit,
     }
     for row in rows:
         cfg[row["key"]] = row["value"]
@@ -412,10 +414,27 @@ def trigger_scan(body: dict = {}):
 
 @app.post("/api/runs/search-all")
 def trigger_search_all(body: dict = {}):
-    filters = {k: body.get(k) for k in ("max_score", "codec", "non_english")}
+    filters = {k: body.get(k) for k in ("max_score", "codec", "non_english", "force")}
     params = _effective_config()
     threading.Thread(target=tasks.run_search_all, args=(params, filters), daemon=True).start()
     return {"queued": True}
+
+
+@app.get("/api/scan/search-count")
+def scan_search_count(max_score: float = None, codec: str = None, non_english: bool = None):
+    clauses = ["(radarr_id IS NOT NULL OR sonarr_id IS NOT NULL)"]
+    args = []
+    if max_score is not None:
+        clauses.append("quality_score <= ?"); args.append(max_score)
+    if codec:
+        clauses.append("video_codec = ?"); args.append(codec)
+    if non_english:
+        clauses.append("(non_english_audio > 0 OR non_english_subs > 0)")
+    with db() as conn:
+        row = conn.execute(
+            f"SELECT COUNT(*) as count FROM scan_files WHERE {' AND '.join(clauses)}", args
+        ).fetchone()
+    return {"count": row["count"] if row else 0}
 
 
 @app.post("/api/runs/strip")
