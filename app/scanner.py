@@ -37,7 +37,7 @@ def probe_file(path: str) -> dict | None:
 
 
 def compute_hash(path: str) -> str:
-    chunk = 64 * 1024 * 1024
+    chunk = 1 * 1024 * 1024  # 1 MB sample from start + end — enough for duplicate detection, avoids NAS thrash
     h = hashlib.sha256()
     size = os.path.getsize(path)
     with open(path, 'rb') as f:
