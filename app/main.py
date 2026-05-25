@@ -1,4 +1,5 @@
 import json
+import os
 import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -409,6 +410,14 @@ def trigger_scan(body: dict = {}):
     return {"queued": True}
 
 
+@app.post("/api/runs/search-all")
+def trigger_search_all(body: dict = {}):
+    filters = {k: body.get(k) for k in ("max_score", "codec", "non_english")}
+    params = _effective_config()
+    threading.Thread(target=tasks.run_search_all, args=(params, filters), daemon=True).start()
+    return {"queued": True}
+
+
 @app.post("/api/runs/strip")
 def trigger_strip(body: dict = {}):
     file_ids = body.get("file_ids", [])
@@ -461,7 +470,9 @@ def list_duplicates():
 
 
 @app.get("/api/scan/stats")
-def scan_stats():
+def scan_stats(threshold: float = None):
+    if threshold is None:
+        threshold = float(_effective_config().get("quality_threshold") or 60)
     with db() as conn:
         row = conn.execute("""
             SELECT
@@ -469,29 +480,85 @@ def scan_stats():
                 SUM(size_bytes) as total_bytes,
                 AVG(quality_score) as avg_score,
                 SUM(CASE WHEN non_english_audio > 0 OR non_english_subs > 0 THEN 1 ELSE 0 END) as has_non_english,
+                SUM(CASE WHEN non_english_audio > 0 OR non_english_subs > 0 THEN size_bytes ELSE 0 END) as non_english_bytes,
                 SUM(CASE WHEN quality_score < 50 THEN 1 ELSE 0 END) as low_quality,
                 SUM(CASE WHEN quality_score >= 50 AND quality_score < 75 THEN 1 ELSE 0 END) as mid_quality,
                 SUM(CASE WHEN quality_score >= 75 THEN 1 ELSE 0 END) as high_quality
             FROM scan_files
         """).fetchone()
+        below = conn.execute(
+            "SELECT COUNT(*) as count, SUM(size_bytes) as bytes FROM scan_files WHERE quality_score <= ?",
+            (threshold,)
+        ).fetchone()
         by_codec = conn.execute("""
             SELECT video_codec, COUNT(*) as count, SUM(size_bytes) as bytes
-            FROM scan_files
-            GROUP BY video_codec
-            ORDER BY count DESC
+            FROM scan_files GROUP BY video_codec ORDER BY count DESC
         """).fetchall()
-        dup_count = conn.execute("""
-            SELECT COUNT(*) as n FROM scan_files
-            WHERE file_hash IN (
+        dup_rows = [dict(r) for r in conn.execute(
+            "SELECT id, file_hash, quality_score, size_bytes FROM scan_files "
+            "WHERE file_hash IS NOT NULL AND file_hash != ''"
+        ).fetchall()]
+
+    groups: dict = {}
+    for r in dup_rows:
+        groups.setdefault(r["file_hash"], []).append(r)
+
+    dup_savings_bytes = 0
+    dup_group_count = 0
+    dup_file_count = 0
+    for grp in groups.values():
+        if len(grp) > 1:
+            dup_group_count += 1
+            dup_file_count += len(grp)
+            grp.sort(key=lambda x: x["quality_score"] or 0, reverse=True)
+            dup_savings_bytes += sum(r["size_bytes"] or 0 for r in grp[1:])
+
+    result = dict(row) if row else {}
+    result["threshold"] = threshold
+    result["below_threshold_count"] = below["count"] if below else 0
+    result["below_threshold_bytes"] = below["bytes"] if below else 0
+    result["by_codec"] = [dict(r) for r in by_codec]
+    result["duplicate_files"] = dup_file_count
+    result["duplicate_groups"] = dup_group_count
+    result["duplicate_savings_bytes"] = dup_savings_bytes
+    return result
+
+
+@app.post("/api/scan/duplicates/resolve")
+def resolve_duplicates():
+    with db() as conn:
+        rows = [dict(r) for r in conn.execute("""
+            SELECT * FROM scan_files
+            WHERE file_hash IS NOT NULL AND file_hash != ''
+            AND file_hash IN (
                 SELECT file_hash FROM scan_files
                 WHERE file_hash IS NOT NULL AND file_hash != ''
                 GROUP BY file_hash HAVING COUNT(*) > 1
             )
-        """).fetchone()
-    result = dict(row) if row else {}
-    result["by_codec"] = [dict(r) for r in by_codec]
-    result["duplicate_files"] = dup_count["n"] if dup_count else 0
-    return result
+            ORDER BY file_hash, quality_score DESC
+        """).fetchall()]
+
+    groups: dict = {}
+    for r in rows:
+        groups.setdefault(r["file_hash"], []).append(r)
+
+    deleted = 0
+    errors = []
+    freed_bytes = 0
+    for grp in groups.values():
+        grp.sort(key=lambda x: x.get("quality_score") or 0, reverse=True)
+        for f in grp[1:]:
+            try:
+                if os.path.isfile(f["path"]):
+                    freed_bytes += f.get("size_bytes") or 0
+                    os.remove(f["path"])
+                with db() as conn:
+                    conn.execute("DELETE FROM scan_files WHERE id=?", (f["id"],))
+                deleted += 1
+            except Exception as e:
+                errors.append(f"{f['filename']}: {e}")
+
+    return {"deleted": deleted, "freed_gb": round(freed_bytes / 1024 ** 3, 2), "errors": errors}
 
 
 @app.delete("/api/scan/files/{file_id}")
