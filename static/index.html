@@ -581,47 +581,52 @@
 
   <!-- ═══════════════════════════════════ SCAN ═══════════════════════════════════ -->
   <section x-show="activeTab==='scan'" x-cloak>
-    <div class="flex items-center justify-between mb-4">
-      <div class="flex items-center gap-3 min-w-0">
-        <h2 class="text-base sm:text-lg font-semibold shrink-0">File Scanner</h2>
-        <template x-if="scanRunProgress">
-          <div class="flex items-center gap-2 min-w-0">
-            <div class="w-24 sm:w-36 h-1.5 bg-gray-700 rounded-full overflow-hidden">
-              <div class="h-full bg-blue-500 rounded-full transition-all"
-                :style="`width:${Math.round((scanRunProgress.done||0)/scanRunProgress.total*100)}%`"></div>
+    <div class="mb-4 space-y-2">
+      <!-- Row 1: title, scan progress, Scan Now -->
+      <div class="flex items-center justify-between gap-2">
+        <div class="flex items-center gap-3 min-w-0">
+          <h2 class="text-base sm:text-lg font-semibold shrink-0">File Scanner</h2>
+          <template x-if="scanRunProgress">
+            <div class="flex items-center gap-2 min-w-0">
+              <div class="w-24 sm:w-36 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                <div class="h-full bg-blue-500 rounded-full transition-all"
+                  :style="`width:${Math.round((scanRunProgress.done||0)/scanRunProgress.total*100)}%`"></div>
+              </div>
+              <span class="text-xs text-blue-400 tabular-nums whitespace-nowrap"
+                x-text="(scanRunProgress.done||0) + ' / ' + scanRunProgress.total"></span>
             </div>
-            <span class="text-xs text-blue-400 tabular-nums whitespace-nowrap"
-              x-text="(scanRunProgress.done||0) + ' / ' + scanRunProgress.total"></span>
-          </div>
-        </template>
+          </template>
+        </div>
+        <button @click="triggerScan()" :disabled="scanning||stripping"
+          class="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 px-3 py-2 rounded-lg text-sm font-medium transition-colors shrink-0">
+          <span x-text="scanning ? 'Scanning…' : 'Scan Now'"></span>
+        </button>
       </div>
-      <div class="flex gap-2">
-        <label x-show="scanTab==='files'" x-cloak class="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer shrink-0 select-none">
+      <!-- Row 2: search controls — horizontally scrollable on mobile -->
+      <div x-show="scanTab==='files'" x-cloak
+        class="flex items-center gap-2 overflow-x-auto scrollbar-none -mx-4 px-4 sm:mx-0 sm:px-0 pb-0.5">
+        <label class="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer shrink-0 select-none">
           <input type="checkbox" x-model="scanForce">
           <span title="Deletes the existing file before searching, forcing Radarr to grab a new one">Force</span>
         </label>
-        <label x-show="scanTab==='files'" x-cloak class="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer shrink-0 select-none">
+        <label class="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer shrink-0 select-none">
           <input type="checkbox" x-model="scanSeasonUpgrade">
-          <span title="Groups TV episodes by season and triggers a SeasonSearch in Sonarr, falling back to series search if the season call fails">Season</span>
+          <span title="Groups TV episodes by season — one SeasonSearch per season, falls back to series search">Season</span>
         </label>
-        <label x-show="scanTab==='files'" x-cloak class="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer shrink-0 select-none">
+        <label class="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer shrink-0 select-none">
           <input type="checkbox" x-model="scanAutoContinue">
           <span title="Automatically queue the next batch when this one finishes, until all eligible files are searched">Auto</span>
         </label>
+        <div class="w-px h-4 bg-gray-600 shrink-0 mx-0.5"></div>
         <button @click="triggerStripNonEnglish()" :disabled="stripping||scanning"
-          x-show="scanTab==='files' && nonEnglishScanCount > 0" x-cloak
-          class="bg-purple-700 hover:bg-purple-600 disabled:opacity-40 px-3 py-2 rounded-lg text-sm font-medium transition-colors shrink-0"
+          x-show="nonEnglishScanCount > 0" x-cloak
+          class="bg-purple-700 hover:bg-purple-600 disabled:opacity-40 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors shrink-0"
           :title="'Strip non-English audio &amp; subtitles from all loaded files with foreign streams'">
           <span x-text="stripping ? 'Stripping…' : 'Strip Non-English ('+nonEnglishScanCount+')'"></span>
         </button>
         <button @click="triggerSearchAll()" :disabled="searchingAll||scanning||!searchAllMatchCount"
-          class="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 px-3 py-2 rounded-lg text-sm font-medium transition-colors shrink-0"
-          x-show="scanTab==='files'" x-cloak>
+          class="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors shrink-0">
           <span x-text="searchingAll ? 'Searching…' : 'Search All ('+searchAllMatchCount+')'"></span>
-        </button>
-        <button @click="triggerScan()" :disabled="scanning||stripping"
-          class="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 px-3 py-2 rounded-lg text-sm font-medium transition-colors shrink-0">
-          <span x-text="scanning ? 'Scanning…' : 'Scan Now'"></span>
         </button>
       </div>
     </div>
