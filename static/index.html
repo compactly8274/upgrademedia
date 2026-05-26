@@ -985,7 +985,15 @@
                 <td class="px-4 py-2 capitalize font-medium" x-text="r.type"></td>
                 <td class="px-4 py-2 text-gray-400 text-xs whitespace-nowrap" x-text="fmt(r.started_at)"></td>
                 <td class="px-4 py-2 text-gray-400 text-xs" x-text="dur(r)"></td>
-                <td class="px-4 py-2"><span class="px-2 py-0.5 rounded-full text-xs" :class="statusCls(r.status)" x-text="r.status"></span></td>
+                <td class="px-4 py-2">
+                  <div class="flex items-center gap-2">
+                    <span class="px-2 py-0.5 rounded-full text-xs" :class="statusCls(r.status)" x-text="r.status"></span>
+                    <button x-show="r.status==='running'" @click.stop="cancelRun(r)"
+                      class="text-[10px] text-red-400 hover:text-red-300 border border-red-800/60 hover:border-red-500 px-1.5 py-0.5 rounded transition-colors leading-none">
+                      Cancel
+                    </button>
+                  </div>
+                </td>
                 <td class="px-4 py-2 text-gray-400 text-xs" x-text="sumText(r.summary)"></td>
               </tr>
               <tr x-show="selRun?.id===r.id" class="bg-gray-900/80 border-b border-gray-700/50">
@@ -1853,6 +1861,14 @@ function app() {
         },3000);
       } catch(e) { this.flash('Error: '+e.message,true); this.searchingAll=false; }
     },
+    async cancelRun(r) {
+      if (!confirm(`Cancel this ${r.type.replace('_',' ')} job?\n\nProgress so far will be saved.`)) return;
+      try {
+        await this.req('POST', `/api/runs/${r.id}/cancel`);
+        this.flash('Cancelling — job will stop at the next file');
+        setTimeout(() => this.loadRuns(), 2000);
+      } catch(e) { this.flash('Cancel failed: '+e.message, true); }
+    },
     async resolveAllDuplicates() {
       const groups = this.dupGroups(this.scanDuplicates);
       if (!groups.length) return;
@@ -1923,7 +1939,13 @@ function app() {
       return ms<60000?(ms/1000).toFixed(0)+'s':(ms/60000).toFixed(1)+'m';
     },
     statusCls(s){
-      return {running:'bg-blue-900/60 text-blue-300',success:'bg-emerald-900/60 text-emerald-300',error:'bg-red-900/60 text-red-300'}[s]||'bg-gray-700 text-gray-300';
+      return {
+        running:'bg-blue-900/60 text-blue-300',
+        success:'bg-emerald-900/60 text-emerald-300',
+        error:'bg-red-900/60 text-red-300',
+        cancelled:'bg-orange-900/60 text-orange-300',
+        interrupted:'bg-yellow-900/60 text-yellow-300',
+      }[s]||'bg-gray-700 text-gray-300';
     },
     sumText(j){
       if (!j) return '';

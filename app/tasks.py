@@ -25,12 +25,25 @@ NEVER = 99999
 # Pending auto-continue batch (set when auto_continue fires, cleared on new run or cancel)
 _pending_batch: dict = {}
 
+# Per-run cancellation events: run_id -> threading.Event
+_cancel_flags: dict = {}
+
 
 def _cancel_pending():
     t = _pending_batch.get("timer")
     if t:
         t.cancel()
     _pending_batch.clear()
+
+
+def _register_cancel(run_id: int) -> threading.Event:
+    ev = threading.Event()
+    _cancel_flags[run_id] = ev
+    return ev
+
+
+def _clear_cancel(run_id: int):
+    _cancel_flags.pop(run_id, None)
 
 
 def _now() -> str:
@@ -133,6 +146,7 @@ def run_analyze(params: dict = None):
     if params is None:
         params = _effective_config()
     run_id = _start_run("analyze", params)
+    cancel = _register_cancel(run_id)
     try:
         plex_token = params.get("plex_token", "")
         if not plex_token:
@@ -224,13 +238,18 @@ def run_analyze(params: dict = None):
                      r["radarr_id"], r["sonarr_id"], r["plex_key"])
                 )
 
-        _finish_run(run_id, "success", {"scanned": len(rows), "candidates": len(candidates)})
-        _notify(params, "Media Manager — Analyze complete",
-                f"Scanned {len(rows)} items, found {len(candidates)} removal candidates.")
+        if cancel.is_set():
+            _finish_run(run_id, "cancelled", {}, "Cancelled by user")
+        else:
+            _finish_run(run_id, "success", {"scanned": len(rows), "candidates": len(candidates)})
+            _notify(params, "Media Manager — Analyze complete",
+                    f"Scanned {len(rows)} items, found {len(candidates)} removal candidates.")
     except Exception as exc:
         log.exception("Analyze task failed")
         _finish_run(run_id, "error", {}, str(exc))
         _notify(params, "Media Manager — Analyze failed", str(exc))
+    finally:
+        _clear_cancel(run_id)
     return run_id
 
 
@@ -242,6 +261,7 @@ def run_upgrade(params: dict = None, csv_text: str = ""):
     if params is None:
         params = _effective_config()
     run_id = _start_run("upgrade", params)
+    cancel = _register_cancel(run_id)
     logs = []
     try:
         if not csv_text.strip():
@@ -302,6 +322,7 @@ def run_upgrade(params: dict = None, csv_text: str = ""):
             logs.append(f"Radarr library: {len(all_movies)} movies, {len(file_stem_lookup)} with files")
 
             for row in movie_rows:
+                if cancel.is_set(): break
                 filename = row.get("filename", "")
                 rel_path = row.get("relative_path", "")
                 file_stem = Path(filename).stem.lower() if filename else ""
@@ -338,6 +359,7 @@ def run_upgrade(params: dict = None, csv_text: str = ""):
             series_lib = {s.get("title", "").lower(): s for s in sonarr.series()}
             logs.append(f"Sonarr library: {len(series_lib)} series")
             for row in ep_rows:
+                if cancel.is_set(): break
                 # Medialyze provides series_title for TV content
                 series_title = (row.get("series_title") or row.get("title", "")).lower()
                 score = row.get("quality_score") or row.get("score", "?")
@@ -359,16 +381,23 @@ def run_upgrade(params: dict = None, csv_text: str = ""):
                 if delay:
                     time.sleep(delay)
 
-        _finish_run(run_id, "success",
-                    {"matched": matched, "unmatched": unmatched, "triggered": triggered, "dry_run": dry_run},
-                    "\n".join(logs))
-        suffix = " (dry run)" if dry_run else ""
-        _notify(params, f"Media Manager — Upgrade complete{suffix}",
-                f"Matched {matched}, triggered {triggered}, unmatched {unmatched}.")
+        if cancel.is_set():
+            _finish_run(run_id, "cancelled",
+                        {"matched": matched, "unmatched": unmatched, "triggered": triggered},
+                        "\n".join(logs) + "\nCancelled by user")
+        else:
+            _finish_run(run_id, "success",
+                        {"matched": matched, "unmatched": unmatched, "triggered": triggered, "dry_run": dry_run},
+                        "\n".join(logs))
+            suffix = " (dry run)" if dry_run else ""
+            _notify(params, f"Media Manager — Upgrade complete{suffix}",
+                    f"Matched {matched}, triggered {triggered}, unmatched {unmatched}.")
     except Exception as exc:
         log.exception("Upgrade task failed")
         _finish_run(run_id, "error", {}, str(exc))
         _notify(params, "Media Manager — Upgrade failed", str(exc))
+    finally:
+        _clear_cancel(run_id)
     return run_id
 
 
@@ -430,6 +459,7 @@ def _scan_progress(run_id: int, summary: dict, logs: list):
 def run_search_all(params: dict, filters: dict):
     _cancel_pending()
     run_id = _start_run("search_all", params)
+    cancel = _register_cancel(run_id)
     logs = []
     try:
         clauses = ["(radarr_id IS NOT NULL OR sonarr_id IS NOT NULL)"]
@@ -507,6 +537,7 @@ def run_search_all(params: dict, filters: dict):
             done = 0
 
             for i, (kind, item) in enumerate(work):
+                if cancel.is_set(): done += 1; break
                 ok = False
                 if kind == 'radarr':
                     f = item
@@ -562,6 +593,7 @@ def run_search_all(params: dict, filters: dict):
                     }, logs)
         else:
             for i, f in enumerate(files):
+                if cancel.is_set(): break
                 ok = False
                 if f.get("radarr_id") and radarr:
                     try:
@@ -614,13 +646,19 @@ def run_search_all(params: dict, filters: dict):
             else:
                 logs.append("Auto-continue: all files searched, no more batches needed")
 
-        _finish_run(run_id, "success", summary, "\n".join(logs))
-        _notify(params, "Media Manager — Bulk Search complete",
-                f"Triggered {triggered} upgrade searches.")
+        if cancel.is_set():
+            logs.append("Cancelled by user")
+            _finish_run(run_id, "cancelled", summary, "\n".join(logs))
+        else:
+            _finish_run(run_id, "success", summary, "\n".join(logs))
+            _notify(params, "Media Manager — Bulk Search complete",
+                    f"Triggered {triggered} upgrade searches.")
     except Exception as exc:
         log.exception("search_all task failed")
         _finish_run(run_id, "error", {}, str(exc))
         _notify(params, "Media Manager — Bulk Search failed", str(exc))
+    finally:
+        _clear_cancel(run_id)
     return run_id
 
 
@@ -664,6 +702,7 @@ def run_scan(params: dict = None):
     if params is None:
         params = _effective_config()
     run_id = _start_run("scan", params)
+    cancel = _register_cancel(run_id)
     logs = []
     try:
         raw_paths = str(params.get("media_paths") or "").strip()
@@ -742,6 +781,8 @@ def run_scan(params: dict = None):
             }
 
             for future in as_completed(futures):
+                if cancel.is_set():
+                    break
                 done += 1
                 status, path, result = future.result()
                 if status == 'ok':
@@ -777,14 +818,20 @@ def run_scan(params: dict = None):
                 logs.append(f"Removed {removed} record(s) for files no longer on disk")
 
         summary = {"total": len(files), "scanned": scanned, "skipped": skipped, "removed": removed, "errors": errors}
-        logs.append(f"Done — scanned {scanned}, skipped {skipped} (unchanged), {removed} removed, {errors} errors")
-        _finish_run(run_id, "success", summary, "\n".join(logs))
-        _notify(params, "Media Manager — Scan complete",
-                f"Scanned {scanned} files, {skipped} unchanged, {removed} removed, {errors} errors.")
+        if cancel.is_set():
+            logs.append("Cancelled by user")
+            _finish_run(run_id, "cancelled", summary, "\n".join(logs))
+        else:
+            logs.append(f"Done — scanned {scanned}, skipped {skipped} (unchanged), {removed} removed, {errors} errors")
+            _finish_run(run_id, "success", summary, "\n".join(logs))
+            _notify(params, "Media Manager — Scan complete",
+                    f"Scanned {scanned} files, {skipped} unchanged, {removed} removed, {errors} errors.")
     except Exception as exc:
         log.exception("Scan task failed")
         _finish_run(run_id, "error", {}, str(exc))
         _notify(params, "Media Manager — Scan failed", str(exc))
+    finally:
+        _clear_cancel(run_id)
     return run_id
 
 
@@ -796,6 +843,7 @@ def run_strip(file_ids: list, params: dict = None):
     if params is None:
         params = _effective_config()
     run_id = _start_run("strip", params)
+    cancel = _register_cancel(run_id)
     logs = []
     try:
         if not file_ids:
@@ -812,6 +860,7 @@ def run_strip(file_ids: list, params: dict = None):
         stripped = skipped = errors = 0
 
         for row in rows:
+            if cancel.is_set(): break
             row = dict(row)
             path = row["path"]
             filename = row["filename"]
@@ -864,12 +913,18 @@ def run_strip(file_ids: list, params: dict = None):
                     except: pass
 
         summary = {"stripped": stripped, "skipped": skipped, "errors": errors}
-        logs.append(f"Done — stripped {stripped}, skipped {skipped} (already clean), errors {errors}")
-        _finish_run(run_id, "success", summary, "\n".join(logs))
-        _notify(params, "Media Manager — Strip complete",
-                f"Stripped {stripped} files, {skipped} already clean, {errors} errors.")
+        if cancel.is_set():
+            logs.append("Cancelled by user")
+            _finish_run(run_id, "cancelled", summary, "\n".join(logs))
+        else:
+            logs.append(f"Done — stripped {stripped}, skipped {skipped} (already clean), errors {errors}")
+            _finish_run(run_id, "success", summary, "\n".join(logs))
+            _notify(params, "Media Manager — Strip complete",
+                    f"Stripped {stripped} files, {skipped} already clean, {errors} errors.")
     except Exception as exc:
         log.exception("Strip task failed")
         _finish_run(run_id, "error", {}, str(exc))
         _notify(params, "Media Manager — Strip failed", str(exc))
+    finally:
+        _clear_cancel(run_id)
     return run_id

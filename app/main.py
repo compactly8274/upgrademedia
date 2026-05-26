@@ -95,6 +95,20 @@ def get_run(run_id: int):
     return dict(row)
 
 
+@app.post("/api/runs/{run_id}/cancel")
+def cancel_run(run_id: int):
+    with db() as conn:
+        row = conn.execute("SELECT status FROM runs WHERE id=?", (run_id,)).fetchone()
+    if not row:
+        raise HTTPException(404)
+    if row["status"] != "running":
+        raise HTTPException(400, "Run is not currently running")
+    ev = tasks._cancel_flags.get(run_id)
+    if ev:
+        ev.set()
+    return {"ok": True}
+
+
 @app.post("/api/runs/analyze")
 def trigger_analyze(body: dict = {}):
     params = _effective_config(body)
