@@ -519,19 +519,19 @@ def run_search_all(params: dict, filters: dict):
             other_files = [f for f in files if not f.get("radarr_id") and not f.get("sonarr_id")]
 
             season_groups = {}
-            no_season = {}
+            no_season = {}  # sid -> [all files for this series with no season number]
             for f in sonarr_files:
                 sn = f.get("season_number")
                 sid = int(f["sonarr_id"])
                 if sn is not None:
                     season_groups.setdefault((sid, int(sn)), []).append(f)
                 else:
-                    no_season[sid] = f
+                    no_season.setdefault(sid, []).append(f)
 
             work = (
                 [('radarr', f) for f in radarr_files]
                 + [('season', (key, grp)) for key, grp in season_groups.items()]
-                + [('series', f) for f in no_season.values()]
+                + [('series', (sid, grp)) for sid, grp in no_season.items()]
                 + [('skip', f) for f in other_files]
             )
             done = 0
@@ -572,14 +572,15 @@ def run_search_all(params: dict, filters: dict):
                             logs.append(f"Error series_id={sid} season={sn}: {e2}")
                     done += len(grp)
                 elif kind == 'series':
-                    f = item
+                    sid, grp = item
                     try:
-                        sonarr.search_series(int(f["sonarr_id"]))
-                        _mark_searched([f["id"]])
+                        sonarr.search_series(sid)
+                        _mark_searched([f["id"] for f in grp])
                         triggered += 1; ok = True
+                        logs.append(f"Series search: series_id={sid} ({len(grp)} file(s))")
                     except Exception as e:
-                        errors += 1; logs.append(f"Error {f['filename']}: {e}")
-                    done += 1
+                        errors += 1; logs.append(f"Error series_id={sid}: {e}")
+                    done += len(grp)
                 else:
                     skipped += 1
                     done += 1
@@ -592,37 +593,56 @@ def run_search_all(params: dict, filters: dict):
                         "skipped": skipped, "errors": errors, "done": done,
                     }, logs)
         else:
-            for i, f in enumerate(files):
+            # Deduplicate sonarr files by series_id so we fire one search per series
+            sonarr_groups: dict = {}
+            flat_work = []
+            for f in files:
+                if f.get("sonarr_id") and sonarr:
+                    sonarr_groups.setdefault(int(f["sonarr_id"]), []).append(f)
+                else:
+                    flat_work.append(f)
+
+            work_items = (
+                [('radarr', f) for f in flat_work]
+                + [('sonarr', (sid, grp)) for sid, grp in sonarr_groups.items()]
+            )
+            done = 0
+            for i, (kind, item) in enumerate(work_items):
                 if cancel.is_set(): break
                 ok = False
-                if f.get("radarr_id") and radarr:
+                if kind == 'radarr':
+                    f = item
+                    if f.get("radarr_id") and radarr:
+                        try:
+                            if force:
+                                movie = radarr.movie(int(f["radarr_id"]))
+                                mf = (movie.get("movieFile") or {}) if movie else {}
+                                if mf.get("id"):
+                                    radarr.delete_file(int(mf["id"]))
+                                    logs.append(f"Deleted file: {f['filename']}")
+                            radarr.search(int(f["radarr_id"]))
+                            _mark_searched([f["id"]])
+                            triggered += 1; ok = True
+                        except Exception as e:
+                            errors += 1; logs.append(f"Error {f['filename']}: {e}")
+                    else:
+                        skipped += 1
+                    done += 1
+                else:  # sonarr
+                    sid, grp = item
                     try:
-                        if force:
-                            movie = radarr.movie(int(f["radarr_id"]))
-                            mf = (movie.get("movieFile") or {}) if movie else {}
-                            if mf.get("id"):
-                                radarr.delete_file(int(mf["id"]))
-                                logs.append(f"Deleted file: {f['filename']}")
-                        radarr.search(int(f["radarr_id"]))
-                        _mark_searched([f["id"]])
+                        sonarr.search_series(sid)
+                        _mark_searched([f["id"] for f in grp])
                         triggered += 1; ok = True
                     except Exception as e:
-                        errors += 1; logs.append(f"Error {f['filename']}: {e}")
-                elif f.get("sonarr_id") and sonarr:
-                    try:
-                        sonarr.search_series(int(f["sonarr_id"]))
-                        _mark_searched([f["id"]])
-                        triggered += 1; ok = True
-                    except Exception as e:
-                        errors += 1; logs.append(f"Error {f['filename']}: {e}")
-                else:
-                    skipped += 1
+                        errors += 1; logs.append(f"Error series_id={sid}: {e}")
+                    done += len(grp)
                 if ok and delay:
                     time.sleep(delay)
-                if (i + 1) % 20 == 0 or i == len(files) - 1:
+                if (i + 1) % 20 == 0 or i == len(work_items) - 1:
                     _scan_progress(run_id, {
                         "total": len(files), "triggered": triggered,
-                        "skipped": skipped, "errors": errors, "done": i + 1,
+                        "skipped": skipped, "errors": errors, "done": done,
                     }, logs)
 
         summary = {"total": len(files), "triggered": triggered, "skipped": skipped, "errors": errors}
