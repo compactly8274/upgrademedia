@@ -524,7 +524,7 @@ def run_search_all(params: dict, filters: dict):
         if radarr_queue or sonarr_queue:
             logs.append(f"Queue snapshot: {len(radarr_queue)} movie(s), {len(sonarr_queue)} series already downloading — will skip")
 
-        triggered = skipped = errors = 0
+        triggered = skipped = queue_skipped = errors = 0
         now = _now()
 
         def _mark_searched(file_ids: list):
@@ -560,14 +560,14 @@ def run_search_all(params: dict, filters: dict):
             done = 0
 
             for i, (kind, item) in enumerate(work):
-                if cancel.is_set(): done += 1; break
+                if cancel.is_set(): break
                 ok = False
                 if kind == 'radarr':
                     f = item
                     rid = int(f["radarr_id"])
                     if rid in radarr_queue:
                         _mark_searched([f["id"]])
-                        skipped += 1
+                        queue_skipped += 1; skipped += 1
                         logs.append(f"Queued: {f['filename']} — skipped")
                     else:
                         try:
@@ -587,7 +587,7 @@ def run_search_all(params: dict, filters: dict):
                     (sid, sn), grp = item
                     if sid in sonarr_queue:
                         _mark_searched([f["id"] for f in grp])
-                        skipped += 1
+                        queue_skipped += 1; skipped += 1
                         logs.append(f"Queued: series_id={sid} season={sn} ({len(grp)} file(s)) — skipped")
                     else:
                         try:
@@ -609,7 +609,7 @@ def run_search_all(params: dict, filters: dict):
                     sid, grp = item
                     if sid in sonarr_queue:
                         _mark_searched([f["id"] for f in grp])
-                        skipped += 1
+                        queue_skipped += 1; skipped += 1
                         logs.append(f"Queued: series_id={sid} ({len(grp)} file(s)) — skipped")
                     else:
                         try:
@@ -655,7 +655,7 @@ def run_search_all(params: dict, filters: dict):
                         rid = int(f["radarr_id"])
                         if rid in radarr_queue:
                             _mark_searched([f["id"]])
-                            skipped += 1
+                            queue_skipped += 1; skipped += 1
                             logs.append(f"Queued: {f['filename']} — skipped")
                         else:
                             try:
@@ -677,7 +677,7 @@ def run_search_all(params: dict, filters: dict):
                     sid, grp = item
                     if sid in sonarr_queue:
                         _mark_searched([f["id"] for f in grp])
-                        skipped += 1
+                        queue_skipped += 1; skipped += 1
                         logs.append(f"Queued: series_id={sid} ({len(grp)} file(s)) — skipped")
                     else:
                         try:
@@ -695,11 +695,22 @@ def run_search_all(params: dict, filters: dict):
                         "skipped": skipped, "errors": errors, "done": done,
                     }, logs)
 
-        summary = {"total": len(files), "triggered": triggered, "skipped": skipped, "errors": errors}
-        logs.append(f"Done — triggered {triggered}, skipped {skipped} (unlinked), errors {errors}")
+        unlinked = skipped - queue_skipped
+        summary = {"total": len(files), "triggered": triggered, "skipped": skipped,
+                   "queue_skipped": queue_skipped, "errors": errors}
+        parts = [f"triggered {triggered}"]
+        if queue_skipped:
+            parts.append(f"queue-skipped {queue_skipped}")
+        if unlinked:
+            parts.append(f"unlinked {unlinked}")
+        parts.append(f"errors {errors}")
+        logs.append(f"Done — {', '.join(parts)}")
 
-        # Auto-continue: schedule next batch if more files remain
-        if auto_continue and triggered > 0:
+        # Auto-continue: schedule next batch if more files remain.
+        # queue_skipped items were stamped, so they'll be excluded from the next query —
+        # progress was made and it's safe to continue. Pure unlinked skips (no API key)
+        # are NOT stamped, so we only continue if triggered or queue_skipped > 0.
+        if auto_continue and (triggered > 0 or queue_skipped > 0):
             with db() as conn:
                 remaining = conn.execute(
                     f"SELECT COUNT(*) FROM scan_files WHERE {' AND '.join(clauses)}", args
