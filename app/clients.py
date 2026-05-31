@@ -50,6 +50,14 @@ class RadarrClient(_Base):
     def delete(self, movie_id: int):
         self._delete(f"/api/v3/movie/{movie_id}", deleteFiles="true", addImportExclusion="true")
 
+    def queue_movie_ids(self) -> set:
+        try:
+            data = self._get("/api/v3/queue", pageSize=1000)
+            records = data.get("records", []) if isinstance(data, dict) else data
+            return {int(r["movieId"]) for r in records if r.get("movieId")}
+        except Exception:
+            return set()
+
 
 class SonarrClient(_Base):
     def __init__(self, url: str, api_key: str):
@@ -69,6 +77,14 @@ class SonarrClient(_Base):
 
     def search_episode(self, ep_ids: list):
         return self._post("/api/v3/command", {"name": "EpisodeSearch", "episodeIds": ep_ids})
+
+    def queue_series_ids(self) -> set:
+        try:
+            data = self._get("/api/v3/queue", pageSize=1000)
+            records = data.get("records", []) if isinstance(data, dict) else data
+            return {int(r["seriesId"]) for r in records if r.get("seriesId")}
+        except Exception:
+            return set()
 
     def delete(self, series_id: int):
         self._delete(f"/api/v3/series/{series_id}", deleteFiles="true", addImportListExclusion="true")

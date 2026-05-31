@@ -304,7 +304,7 @@ def run_upgrade(params: dict = None, csv_text: str = ""):
         logs.append(f"Movies: {len(movie_rows)}, TV episodes: {len(ep_rows)}")
         dry_run = str(params.get("dry_run", "false")).lower() in ("true", "1", "yes")
         delay = float(params.get("delay", 0.5))
-        matched = unmatched = triggered = 0
+        matched = unmatched = triggered = queued = 0
 
         if movie_rows and not params.get("radarr_api_key"):
             logs.append(f"Skipping {len(movie_rows)} movie row(s) — Radarr API key not configured")
@@ -320,6 +320,9 @@ def run_upgrade(params: dict = None, csv_text: str = ""):
                 if stem:
                     file_stem_lookup[stem] = m
             logs.append(f"Radarr library: {len(all_movies)} movies, {len(file_stem_lookup)} with files")
+            radarr_queue = radarr.queue_movie_ids()
+            if radarr_queue:
+                logs.append(f"Radarr queue: {len(radarr_queue)} movie(s) already downloading")
 
             for row in movie_rows:
                 if cancel.is_set(): break
@@ -342,6 +345,9 @@ def run_upgrade(params: dict = None, csv_text: str = ""):
                 label = f"{movie['title']} ({movie.get('year', '?')})"
                 if dry_run:
                     logs.append(f"[DRY-RUN] {label} (quality_score={score})")
+                elif movie["id"] in radarr_queue:
+                    queued += 1
+                    logs.append(f"Queued: {label} — already downloading, skipped")
                 else:
                     try:
                         radarr.search(movie["id"])
@@ -358,6 +364,10 @@ def run_upgrade(params: dict = None, csv_text: str = ""):
             sonarr = SonarrClient(str(params["sonarr_url"]), str(params["sonarr_api_key"]))
             series_lib = {s.get("title", "").lower(): s for s in sonarr.series()}
             logs.append(f"Sonarr library: {len(series_lib)} series")
+            sonarr_queue = sonarr.queue_series_ids()
+            if sonarr_queue:
+                logs.append(f"Sonarr queue: {len(sonarr_queue)} series already downloading")
+            searched_series: set = set()  # deduplicate series within this run
             for row in ep_rows:
                 if cancel.is_set(): break
                 # Medialyze provides series_title for TV content
@@ -369,11 +379,18 @@ def run_upgrade(params: dict = None, csv_text: str = ""):
                     logs.append(f"No match: {series_title} (quality_score={score})")
                     continue
                 matched += 1
+                sid = series["id"]
                 if dry_run:
                     logs.append(f"[DRY-RUN] {series['title']} (quality_score={score})")
+                elif sid in sonarr_queue:
+                    queued += 1
+                    logs.append(f"Queued: {series['title']} — already downloading, skipped")
+                elif sid in searched_series:
+                    pass  # already triggered this series in the current run
                 else:
                     try:
-                        sonarr.search_series(series["id"])
+                        sonarr.search_series(sid)
+                        searched_series.add(sid)
                         triggered += 1
                         logs.append(f"Triggered: {series['title']}")
                     except Exception as e:
@@ -383,15 +400,15 @@ def run_upgrade(params: dict = None, csv_text: str = ""):
 
         if cancel.is_set():
             _finish_run(run_id, "cancelled",
-                        {"matched": matched, "unmatched": unmatched, "triggered": triggered},
+                        {"matched": matched, "unmatched": unmatched, "triggered": triggered, "queued": queued},
                         "\n".join(logs) + "\nCancelled by user")
         else:
             _finish_run(run_id, "success",
-                        {"matched": matched, "unmatched": unmatched, "triggered": triggered, "dry_run": dry_run},
+                        {"matched": matched, "unmatched": unmatched, "triggered": triggered, "queued": queued, "dry_run": dry_run},
                         "\n".join(logs))
             suffix = " (dry run)" if dry_run else ""
             _notify(params, f"Media Manager — Upgrade complete{suffix}",
-                    f"Matched {matched}, triggered {triggered}, unmatched {unmatched}.")
+                    f"Matched {matched}, triggered {triggered}, queued {queued}, unmatched {unmatched}.")
     except Exception as exc:
         log.exception("Upgrade task failed")
         _finish_run(run_id, "error", {}, str(exc))
@@ -501,6 +518,12 @@ def run_search_all(params: dict, filters: dict):
 
         radarr = RadarrClient(str(params["radarr_url"]), str(params["radarr_api_key"])) if params.get("radarr_api_key") else None
         sonarr = SonarrClient(str(params["sonarr_url"]), str(params["sonarr_api_key"])) if params.get("sonarr_api_key") else None
+
+        radarr_queue = radarr.queue_movie_ids() if radarr else set()
+        sonarr_queue = sonarr.queue_series_ids() if sonarr else set()
+        if radarr_queue or sonarr_queue:
+            logs.append(f"Queue snapshot: {len(radarr_queue)} movie(s), {len(sonarr_queue)} series already downloading — will skip")
+
         triggered = skipped = errors = 0
         now = _now()
 
@@ -541,45 +564,61 @@ def run_search_all(params: dict, filters: dict):
                 ok = False
                 if kind == 'radarr':
                     f = item
-                    try:
-                        if force:
-                            movie = radarr.movie(int(f["radarr_id"]))
-                            mf = (movie.get("movieFile") or {}) if movie else {}
-                            if mf.get("id"):
-                                radarr.delete_file(int(mf["id"]))
-                                logs.append(f"Deleted file: {f['filename']}")
-                        radarr.search(int(f["radarr_id"]))
+                    rid = int(f["radarr_id"])
+                    if rid in radarr_queue:
                         _mark_searched([f["id"]])
-                        triggered += 1; ok = True
-                    except Exception as e:
-                        errors += 1; logs.append(f"Error {f['filename']}: {e}")
+                        skipped += 1
+                        logs.append(f"Queued: {f['filename']} — skipped")
+                    else:
+                        try:
+                            if force:
+                                movie = radarr.movie(rid)
+                                mf = (movie.get("movieFile") or {}) if movie else {}
+                                if mf.get("id"):
+                                    radarr.delete_file(int(mf["id"]))
+                                    logs.append(f"Deleted file: {f['filename']}")
+                            radarr.search(rid)
+                            _mark_searched([f["id"]])
+                            triggered += 1; ok = True
+                        except Exception as e:
+                            errors += 1; logs.append(f"Error {f['filename']}: {e}")
                     done += 1
                 elif kind == 'season':
                     (sid, sn), grp = item
-                    try:
-                        sonarr.search_season(sid, sn)
+                    if sid in sonarr_queue:
                         _mark_searched([f["id"] for f in grp])
-                        triggered += 1; ok = True
-                        logs.append(f"Season search: series_id={sid} season={sn} ({len(grp)} file(s))")
-                    except Exception as e:
+                        skipped += 1
+                        logs.append(f"Queued: series_id={sid} season={sn} ({len(grp)} file(s)) — skipped")
+                    else:
+                        try:
+                            sonarr.search_season(sid, sn)
+                            _mark_searched([f["id"] for f in grp])
+                            triggered += 1; ok = True
+                            logs.append(f"Season search: series_id={sid} season={sn} ({len(grp)} file(s))")
+                        except Exception as e:
+                            try:
+                                sonarr.search_series(sid)
+                                _mark_searched([f["id"] for f in grp])
+                                triggered += 1; ok = True
+                                logs.append(f"Season fallback→series: series_id={sid} season={sn} ({e})")
+                            except Exception as e2:
+                                errors += 1
+                                logs.append(f"Error series_id={sid} season={sn}: {e2}")
+                    done += len(grp)
+                elif kind == 'series':
+                    sid, grp = item
+                    if sid in sonarr_queue:
+                        _mark_searched([f["id"] for f in grp])
+                        skipped += 1
+                        logs.append(f"Queued: series_id={sid} ({len(grp)} file(s)) — skipped")
+                    else:
                         try:
                             sonarr.search_series(sid)
                             _mark_searched([f["id"] for f in grp])
                             triggered += 1; ok = True
-                            logs.append(f"Season fallback→series: series_id={sid} season={sn} ({e})")
-                        except Exception as e2:
-                            errors += 1
-                            logs.append(f"Error series_id={sid} season={sn}: {e2}")
-                    done += len(grp)
-                elif kind == 'series':
-                    sid, grp = item
-                    try:
-                        sonarr.search_series(sid)
-                        _mark_searched([f["id"] for f in grp])
-                        triggered += 1; ok = True
-                        logs.append(f"Series search: series_id={sid} ({len(grp)} file(s))")
-                    except Exception as e:
-                        errors += 1; logs.append(f"Error series_id={sid}: {e}")
+                            logs.append(f"Series search: series_id={sid} ({len(grp)} file(s))")
+                        except Exception as e:
+                            errors += 1; logs.append(f"Error series_id={sid}: {e}")
                     done += len(grp)
                 else:
                     skipped += 1
@@ -613,29 +652,40 @@ def run_search_all(params: dict, filters: dict):
                 if kind == 'radarr':
                     f = item
                     if f.get("radarr_id") and radarr:
-                        try:
-                            if force:
-                                movie = radarr.movie(int(f["radarr_id"]))
-                                mf = (movie.get("movieFile") or {}) if movie else {}
-                                if mf.get("id"):
-                                    radarr.delete_file(int(mf["id"]))
-                                    logs.append(f"Deleted file: {f['filename']}")
-                            radarr.search(int(f["radarr_id"]))
+                        rid = int(f["radarr_id"])
+                        if rid in radarr_queue:
                             _mark_searched([f["id"]])
-                            triggered += 1; ok = True
-                        except Exception as e:
-                            errors += 1; logs.append(f"Error {f['filename']}: {e}")
+                            skipped += 1
+                            logs.append(f"Queued: {f['filename']} — skipped")
+                        else:
+                            try:
+                                if force:
+                                    movie = radarr.movie(rid)
+                                    mf = (movie.get("movieFile") or {}) if movie else {}
+                                    if mf.get("id"):
+                                        radarr.delete_file(int(mf["id"]))
+                                        logs.append(f"Deleted file: {f['filename']}")
+                                radarr.search(rid)
+                                _mark_searched([f["id"]])
+                                triggered += 1; ok = True
+                            except Exception as e:
+                                errors += 1; logs.append(f"Error {f['filename']}: {e}")
                     else:
                         skipped += 1
                     done += 1
                 else:  # sonarr
                     sid, grp = item
-                    try:
-                        sonarr.search_series(sid)
+                    if sid in sonarr_queue:
                         _mark_searched([f["id"] for f in grp])
-                        triggered += 1; ok = True
-                    except Exception as e:
-                        errors += 1; logs.append(f"Error series_id={sid}: {e}")
+                        skipped += 1
+                        logs.append(f"Queued: series_id={sid} ({len(grp)} file(s)) — skipped")
+                    else:
+                        try:
+                            sonarr.search_series(sid)
+                            _mark_searched([f["id"] for f in grp])
+                            triggered += 1; ok = True
+                        except Exception as e:
+                            errors += 1; logs.append(f"Error series_id={sid}: {e}")
                     done += len(grp)
                 if ok and delay:
                     time.sleep(delay)
